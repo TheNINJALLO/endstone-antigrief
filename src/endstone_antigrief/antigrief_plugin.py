@@ -1442,10 +1442,14 @@ class AntiGriefPlugin(Plugin):
                         if state_parts:
                             states_str = "[" + ",".join(state_parts) + "]"
                     
-                    # Use setblock command (single operation — no double-set conflict)
-                    cmd = f'setblock {bx} {by} {bz} {block_type}{states_str}'
-                    self.server.dispatch_command(self.server.command_sender, cmd)
-                    count += 1
+                    # Use setblock command with 'replace' to overwrite existing blocks
+                    cmd = f'setblock {bx} {by} {bz} {block_type}{states_str} replace'
+                    result = self.server.dispatch_command(self.server.command_sender, cmd)
+                    if not result:
+                        self.logger.warning(f"[Rollback] setblock FAILED at ({bx},{by},{bz}): {block_type}{states_str}")
+                        errors += 1
+                    else:
+                        count += 1
                     
                     # Queue container restoration for after block is placed
                     if saved_data and "container_items" in saved_data:
@@ -1456,11 +1460,15 @@ class AntiGriefPlugin(Plugin):
                         
                 elif "Place" in action:
                     # Remove placed blocks — use setblock air directly
-                    self.server.dispatch_command(
+                    result = self.server.dispatch_command(
                         self.server.command_sender,
-                        f'setblock {bx} {by} {bz} air'
+                        f'setblock {bx} {by} {bz} air replace'
                     )
-                    count += 1
+                    if not result:
+                        self.logger.warning(f"[Rollback] setblock air FAILED at ({bx},{by},{bz})")
+                        errors += 1
+                    else:
+                        count += 1
             except Exception as e:
                 skipped_types.add(block_type_raw)
                 errors += 1
