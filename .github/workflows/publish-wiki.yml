@@ -1,0 +1,32 @@
+name: Publish Wiki
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["wiki/**", ".github/workflows/publish-wiki.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synchronize wiki pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
+          git clone "$remote" wiki-repo || { echo "Enable the repository Wiki and create its first page, then rerun this workflow."; exit 1; }
+          find wiki-repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R wiki/. wiki-repo/
+          cd wiki-repo
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Update project wiki"
+          git push

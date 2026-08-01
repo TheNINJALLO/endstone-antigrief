@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=80", "wheel>=0.45"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "endstone-antigrief"
+version = "1.5.13"
+description = "BlockData-powered audit logging, exact rollback, recovery, evidence reporting, and WebUI for Endstone servers"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+license = "MIT"
+authors = [{ name = "TheN1NJ4LL0" }]
+maintainers = [{ name = "TheN1NJ4LL0" }]
+keywords = [
+  "minecraft", "bedrock", "endstone", "antigrief", "rollback",
+  "blockdata", "inventory", "webui", "audit", "moderation"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Plugins",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Games/Entertainment",
+  "Topic :: System :: Logging",
+]
+dependencies = [
+  "endstone>=0.11.6,<0.12",
+  "requests>=2.31",
+  "fastapi>=0.100",
+  "uvicorn>=0.20",
+  "bedrock-protocol-packets-ng>=0.0.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/TheNINJALLO/endstone-antigrief"
+Documentation = "https://theninjallo.github.io/endstone-antigrief/"
+Source = "https://github.com/TheNINJALLO/endstone-antigrief"
+Issues = "https://github.com/TheNINJALLO/endstone-antigrief/issues"
+Changelog = "https://github.com/TheNINJALLO/endstone-antigrief/blob/main/CHANGELOG.md"
+
+[project.entry-points.endstone]
+antigrief = "endstone_antigrief:AntiGriefPlugin"
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "pytest>=8.3",
+  "ruff>=0.12",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.exclude-package-data]
+"*" = ["__pycache__/*", "*.pyc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+exclude = ["antigrief_companion_bp"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]

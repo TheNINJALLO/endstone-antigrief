@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a reproducible AntiGrief problem
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: AntiGrief, BlockData, Endstone, BDS, Python, and operating system
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened and what should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Exact steps and commands
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove secrets and private player information
