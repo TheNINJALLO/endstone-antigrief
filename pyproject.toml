@@ -43,6 +43,7 @@ antigrief = "endstone_antigrief:AntiGriefPlugin"
 [project.optional-dependencies]
 dev = [
   "build>=1.2",
+  "httpx>=0.23",
   "pytest>=8.3",
   "ruff>=0.12",
 ]
