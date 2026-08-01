@@ -1,35 +1,51 @@
-# WebUI Guide
+# 🌐 WebUI Security Operations Dashboard
 
-## Sign in
+AntiGrief includes a built-in, lightweight **FastAPI WebUI Security Operations Center** running on port `8098`. The WebUI enables server operators to inspect real-time interaction logs, examine container NBT, review live player Ender Chests, and generate printable PDF evidence reports.
 
-Open `http://SERVER:PORT`, enter the configured secret, and submit. API requests accept the secret in the `X-Secret-Key` header or `secret` query parameter. Do not share dashboard URLs containing the secret.
+---
 
-## Event Log
+## 🔑 Authentication & Access Control
 
-Filter by time, action, player, keyword, or position. Use **VIEW NBT** on container records to open readable slot contents, canonical NBT, and raw SNBT. Bundle and backpack cards show only occupied entries.
+Access to the WebUI is protected by secret key authentication:
 
-## Player Inventories & Ender Chests
+- **Browser Access**: Browse to `http://YOUR_SERVER_IP:8098`, enter your configured `web_ui_secret` from `config.json`, and click **Sign In**.
+- **API Access**: Include the HTTP header `X-Secret-Key: YOUR_SECRET` or append `?secret=YOUR_SECRET` on API requests.
 
-Select a player and switch between Main, Armor, Offhand, Ender Chest, and Full Snapshot. `Online` means a live capture; `Cached Offline` is the last saved snapshot. A degraded badge means malformed native text required the readable Endstone fallback.
+> **Production Security**: Never expose the WebUI port publicly with the default secret `change_this_secret_key`. Change the secret in `plugins/antigrief_data/config.json` and place the WebUI behind an authenticated reverse proxy (Nginx, Caddy, Cloudflare Tunnel) or private VPN.
 
-## Grief Proof Reports
+---
 
-Reports are created automatically by `/agback`. Use **VIEW / PRINT** to open the evidence page, then use the browser print dialog to print or save a PDF.
+## 📊 Dashboard Modules
 
-## API routes
+### 1. Real-Time Event Log
+- **Multi-Param Filtering**: Search interaction events by player, action type (break, place, container, kill), coordinate radius, keyword, and time window.
+- **Container Detail Inspector**: Click **VIEW NBT** on any container event card to open canonical item counts, custom names, enchantments, lore, and raw SNBT.
+- **Clean Item Rendering**: Empty slots are filtered automatically. Bundles and nested storage items render expandable contents without clutter.
 
-- `GET /api/logs`
-- `GET /api/logs/{log_id}/blockdata`
-- `GET /api/container-snapshots`
-- `GET /api/container-snapshots/{snapshot_id}`
-- `GET /api/player-inventories`
-- `GET /api/player-inventories/{player_key}`
-- `GET /api/grief-reports`
-- `GET /api/grief-reports/{report_id}`
-- `GET /reports/{report_id}`
-- `GET /api/stats`
-- `GET /api/bans`
+### 2. Live Player Inventories & Ender Chests
+- **Snapshot Navigation**: Switch seamlessly between **Main Inventory**, **Armor**, **Offhand**, **Ender Chest**, and **Full Composite Snapshot**.
+- **Online vs. Cached Badges**: Displays `Online` for live player captures and `Cached Offline` for players who have logged off.
+- **UTF-8 Safety Indicator**: Malformed legacy item metadata automatically falls back to clean Endstone text parsing without crashing the dashboard.
 
-## Network security
+### 3. Grief Proof Reports
+- **Automated Case Generation**: Reports are automatically created whenever an operator runs `/agback`.
+- **Printable PDF Export**: Click **VIEW / PRINT** to render a clean, print-styled evidence page with timelines, coordinate bounds, affected blocks, item recovery summaries, and a SHA-256 evidence hash.
 
-Prefer a VPN, private management network, SSH tunnel, or reverse proxy with TLS and an additional authentication layer. The built-in shared secret is not a replacement for network isolation.
+---
+
+## 🔌 REST API Endpoints
+
+The WebUI exposes standard REST endpoints for external integrations and monitoring scripts:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/logs` | `GET` | Queries historical interaction logs with filters. |
+| `/api/logs/{id}/blockdata` | `GET` | Fetches raw BlockData NBT for a specific event log. |
+| `/api/container-snapshots` | `GET` | Lists stored container snapshots. |
+| `/api/player-inventories` | `GET` | Returns list of player inventory snapshots. |
+| `/api/player-inventories/{player}` | `GET` | Returns full inventory & Ender Chest snapshot for a player. |
+| `/api/grief-reports` | `GET` | Lists all generated grief proof reports. |
+| `/api/grief-reports/{id}` | `GET` | Returns raw JSON payload of a grief proof report. |
+| `/reports/{id}` | `GET` | Renders printable HTML evidence page for a report. |
+| `/api/stats` | `GET` | Returns server activity totals, event rates, and DB stats. |
+| `/api/bans` | `GET` | Lists active player and device ID bans. |

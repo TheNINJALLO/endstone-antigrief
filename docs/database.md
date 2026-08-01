@@ -1,17 +1,38 @@
-# Database and Retention
+# 🗄️ Database Architecture & Data Retention
 
-AntiGrief stores data in `plugins/antigrief_data/agdata.db` using SQLite.
+AntiGrief stores interaction records, container NBT snapshots, player inventory history, and grief proof reports in SQLite using Write-Ahead Logging (WAL) mode.
 
-Important record groups include ordinary interactions, container snapshots, player inventory snapshots, container ownership records, confirmed recovery rows, bans, and immutable grief reports.
+---
 
-## Backups
+## 📂 Storage Location
 
-Stop the server or use a SQLite-safe backup method before copying the database. Keep database backups with world backups so rollback evidence and world state remain aligned.
+Database files are stored inside `plugins/antigrief_data/`:
 
-## Cleanup
+- `agdata.db`: SQLite database file containing logs, snapshots, and reports.
+- `agdata.db-wal`: SQLite Write-Ahead Log (temporary write journal).
+- `agdata.db-shm`: Shared memory index file for concurrent WAL readers.
 
-`/agclean <hours>` removes ordinary records older than the selected age. Completed grief reports are retained. Review retention and disk use regularly on active servers.
+---
 
-## Migration
+## 📊 Database Tables
 
-Schema changes are applied automatically during startup. Preserve the database when replacing the wheel.
+| Table Name | Description | Key Indexes |
+|---|---|---|
+| `interactions` | Stores block breaks, places, kills, and container accesses. | `time`, `name`, `(x, y, z)` |
+| `container_snapshots` | Stores exact NBT snapshots for containers. | `pos_key`, `time` |
+| `player_inventories` | Stores snapshots of online player inventories and Ender Chests. | `name`, `time` |
+| `grief_reports` | Stores immutable `/agback` report payloads and SHA-256 hashes. | `report_id`, `created_at` |
+| `confiscation_queue` | Stores pending item recovery tasks created by `/agback`. | `player_name`, `status` |
+
+---
+
+## 🧹 Maintenance & Retention (`/agclean`)
+
+To prevent database file growth from impacting server disk space, operators can execute `/agclean`:
+
+```text
+/agclean <hours>
+```
+
+- **What gets cleaned**: Deletes ordinary interaction logs older than the specified hours.
+- **What stays protected**: Immutable `grief_reports` and active `confiscation_queue` rows are **NEVER** deleted by `/agclean`.
