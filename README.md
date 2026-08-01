@@ -1,7 +1,11 @@
-<p align="center"><img src="assets/banner.svg" alt="AntiGrief for Endstone" width="100%"></p>
+<p align="center">
+  <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.13">
+    <img src="https://raw.githubusercontent.com/TheNINJALLO/endstone-antigrief/main/assets/banner.svg" alt="AntiGrief for Endstone" width="100%">
+  </a>
+</p>
 
 <p align="center">
-  <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases"><img alt="Release" src="https://img.shields.io/github/v/release/TheNINJALLO/endstone-antigrief?style=for-the-badge&color=8b5cf6"></a>
+  <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.13"><img alt="Release v1.5.13" src="https://img.shields.io/badge/Release-v1.5.13-8b5cf6?style=for-the-badge&logo=github"></a>
   <a href="https://github.com/TheNINJALLO/endstone-antigrief/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/TheNINJALLO/endstone-antigrief/ci.yml?branch=main&style=for-the-badge"></a>
   <img alt="Endstone" src="https://img.shields.io/badge/Endstone-0.11.6-10b981?style=for-the-badge">
   <img alt="BDS" src="https://img.shields.io/badge/BDS-1.26.33-2563eb?style=for-the-badge">

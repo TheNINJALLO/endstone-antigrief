@@ -1,12 +1,19 @@
+### 🚀 Getting Started
 * [Home](Home)
-* [Installation](Installation)
+* [Installation Guide](Installation)
 * [Configuration](Configuration)
-* [Commands](Commands)
-* [WebUI](WebUI)
-* [Rollback and Recovery](Rollback-and-Recovery)
-* [Inventories and Bundles](Inventories-and-Bundles)
-* [Grief Reports](Grief-Reports)
-* [Database](Database)
-* [Troubleshooting](Troubleshooting)
-* [Pterodactyl](Pterodactyl)
-* [Release Process](Release-Process)
+* [Pterodactyl Deployment](Pterodactyl)
+
+### 🛠️ Operations & Moderation
+* [Command Reference](Commands)
+* [Rollback & Recovery](Rollback-And-Recovery)
+* [Inventories & Bundles](Inventories-And-Bundles)
+
+### 📊 Audit & Evidence
+* [WebUI Security Dashboard](Webui)
+* [Grief Evidence Reports](Grief-Reports)
+* [Database Architecture](Database)
+
+### 🩺 Maintenance & Development
+* [Troubleshooting Matrix](Troubleshooting)
+* [Release & Build Process](Release-Process)

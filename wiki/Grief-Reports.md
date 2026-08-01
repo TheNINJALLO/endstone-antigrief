@@ -1,26 +1,31 @@
-# Grief Proof Reports
+# 📋 Grief Proof Reports & Evidence Integrity
 
-Every successful `/agback` creates a case record. Reports preserve the selected command scope and evidence even after ordinary event cleanup.
+AntiGrief features an automated **Grief Proof Report Generator** that produces immutable, audit-ready evidence files whenever an operator executes `/agback`.
 
-## Included evidence
+---
 
-- Administrator and primary actor
-- Other involved players
-- Center, radius, time window, world, and affected bounds
-- Event timeline
-- Broken, placed, exploded, looted, and changed targets
-- Container type, coordinates, slots, item NBT, lore, and enchantments
-- Block and inventory verification results
-- Returned and pending item recovery
-- SHA-256 evidence integrity hash
+## 🔒 SHA-256 Cryptographic Evidence Integrity
 
-## Status values
+Every generated report contains a SHA-256 evidence hash calculated over:
 
-- `PROCESSING`
-- `COMPLETED`
-- `COMPLETED PENDING RECOVERY`
-- `COMPLETED WITH FAILURES`
+1. The exact `/agback` command parameters (time window, origin coordinates, radius, target player).
+2. All source interaction log entries within the selected volume.
+3. The pre-rollback and post-rollback block state snapshots.
+4. The item recovery queue rows created for affected containers.
 
-The same report updates when an offline player later reconnects and completes recovery.
+```text
+SHA-256: 7f8a3b2c...d9e1f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1
+```
 
-Reports are operational server evidence, not an independent legal finding.
+If an event or database row is tampered with, the SHA-256 signature verification will fail.
+
+---
+
+## 📄 Printable Evidence Reports
+
+Reports can be viewed and printed directly from the WebUI:
+
+- **Timeline Table**: Chronological breakdown of player actions within the target zone.
+- **Coordinate Bounds**: Minimum and maximum `(x, y, z)` spatial box affected by the incident.
+- **Restoration Summary**: Total blocks placed, broken, restored, and container items recovered.
+- **Print & PDF Styling**: Fully styled for browser printing (`Ctrl+P` / `Cmd+P`) and saving as a formal PDF document.

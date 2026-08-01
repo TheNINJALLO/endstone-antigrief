@@ -1,21 +1,30 @@
-# Pterodactyl Deployment
+# 🦖 Pterodactyl Panel Deployment Guide
 
-## File placement
+This document explains how to deploy and run **AntiGrief v1.5.13** on servers managed by Pterodactyl Panel.
 
-Use the server Files page and upload all plugin artifacts to the same `plugins/` directory used by Endstone. A typical Linux installation contains the BlockData native `.so`, the matching CPython 3.14 BlockData inspector wheel, and the AntiGrief wheel.
+---
 
-## Allocation
+## ⚙️ Port Mapping Setup
 
-The WebUI uses TCP, not the Bedrock UDP allocation. Add a separate TCP allocation for `web_ui_port`, or place the WebUI behind another internal proxy. Do not expose the default secret publicly.
+The AntiGrief WebUI runs on TCP port `8098` by default.
 
-## Startup verification
+1. **Allocate Port in Panel**: In Pterodactyl Panel, open your server page, click **Network**, and allocate an additional port (e.g. `8098`).
+2. **Set Port in Config**: Open `plugins/antigrief_data/config.json` and set `"web_ui_port"` to match your allocated port:
+   ```json
+   "web_ui_port": 8098,
+   "web_ui_secret": "your_secure_random_passphrase"
+   ```
+3. **Restart Container**: Restart the server container for port binding to take effect.
 
-Watch the console for the BlockData native adapter, player inventory service, AntiGrief connection, and WebUI address. A delayed AntiGrief connection is acceptable if it later reports `BlockData API connected`.
+---
 
-## Updating
+## 📂 File Manager Setup
 
-Stop the server before replacing wheels. Delete old AntiGrief wheels, keep `plugins/antigrief_data/`, upload the replacement, and start the server.
+Ensure your Pterodactyl server file manager reflects the following structure inside `plugins/`:
 
-## Backups
-
-Include the world and `plugins/antigrief_data/agdata.db` in the same backup schedule. Keep a backup before running a large rollback.
+```text
+plugins/
+├── blockdata_api.so                          (Linux C++ native extension)
+├── endstone_blockdata_api-0.4.8-py3-none-any.whl (BlockData inspector wheel)
+└── endstone_antigrief-1.5.13-py3-none-any.whl    (AntiGrief plugin wheel)
+```
