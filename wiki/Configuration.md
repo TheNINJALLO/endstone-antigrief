@@ -40,7 +40,7 @@ AntiGrief creates `plugins/antigrief_data/config.json`. Existing files are migra
 
 ## Recovery
 
-`auto_confiscate_unauthorized_container_theft` must remain `false`. Recovery is created only by `/agback`. `recover_stolen_items_on_rollback` controls the confirmed recovery phase.
+Recovery items are queued only when an operator confirms an incident with `/agback`. `recover_stolen_items_on_rollback` controls the confirmed recovery phase.
 
 ## Recommended production changes
 
@@ -48,3 +48,24 @@ AntiGrief creates `plugins/antigrief_data/config.json`. Existing files are migra
 - Bind or firewall the WebUI so it is not publicly reachable.
 - Keep ordinary record retention appropriate for disk size.
 - Back up the database before large rollbacks.
+
+## Complete default configuration
+
+```json
+{
+  "record_nature_block": true,
+  "record_human_block": true,
+  "only_record_important_animal": true,
+  "10s_message_max": 6,
+  "10s_command_max": 12,
+  "enable_web_ui": true,
+  "no_log_mobs": ["minecraft:item", "minecraft:xp_orb"],
+  "web_ui_port": 8098,
+  "web_ui_secret": "change_this_secret_key",
+  "require_blockdata_api": true,
+  "capture_container_open_close": true,
+  "store_raw_snbt": true,
+  "container_ownership_enabled": true,
+  "recover_stolen_items_on_rollback": true,
+}
+```

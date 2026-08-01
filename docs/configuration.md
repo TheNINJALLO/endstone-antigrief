@@ -40,7 +40,7 @@ AntiGrief creates `plugins/antigrief_data/config.json`. Existing files are migra
 
 ## Recovery
 
-`auto_confiscate_unauthorized_container_theft` must remain `false`. Recovery is created only by `/agback`. `recover_stolen_items_on_rollback` controls the confirmed recovery phase.
+Recovery items are queued only when an operator confirms an incident with `/agback`. `recover_stolen_items_on_rollback` controls the confirmed recovery phase.
 
 ## Recommended production changes
 
@@ -66,7 +66,6 @@ AntiGrief creates `plugins/antigrief_data/config.json`. Existing files are migra
   "capture_container_open_close": true,
   "store_raw_snbt": true,
   "container_ownership_enabled": true,
-  "auto_confiscate_unauthorized_container_theft": false,
   "recover_stolen_items_on_rollback": true,
   "confiscation_allow_type_fallback_for_tagged_items": true,
   "confiscation_sweep_ticks": 200,

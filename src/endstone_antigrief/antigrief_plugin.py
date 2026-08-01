@@ -91,7 +91,6 @@ DEFAULT_CONFIG = {
     "capture_container_open_close": True,
     "store_raw_snbt": True,
     "container_ownership_enabled": True,
-    "auto_confiscate_unauthorized_container_theft": False,
     "recover_stolen_items_on_rollback": True,
     "confiscation_allow_type_fallback_for_tagged_items": True,
     "confiscation_sweep_ticks": 200,
@@ -113,15 +112,14 @@ def load_config():
     with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
         config = json.load(f)
     
-    # Migrate missing keys from defaults. Automatic confiscation merely from
-    # opening or changing a container is permanently disabled in v1.5.6.
+    # Migrate missing keys from defaults and purge deprecated keys.
     updated = False
     for key, value in DEFAULT_CONFIG.items():
         if key not in config:
             config[key] = value
             updated = True
-    if config.get("auto_confiscate_unauthorized_container_theft") is not False:
-        config["auto_confiscate_unauthorized_container_theft"] = False
+    if "auto_confiscate_unauthorized_container_theft" in config:
+        del config["auto_confiscate_unauthorized_container_theft"]
         updated = True
     
     if updated:

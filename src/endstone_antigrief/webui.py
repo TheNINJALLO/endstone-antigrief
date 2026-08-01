@@ -34,6 +34,7 @@ except ImportError:
 # Data paths
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 WEB_CONFIG_FILE = os.path.join(DATA_DIR, "web_config.json")
 
 # Global state
@@ -285,21 +286,38 @@ table{{width:100%;border-collapse:collapse;font-size:12px}} th,td{{border:1px so
 
 
 def get_web_config():
-    """Load or create WebUI configuration"""
-    default_config = {
-        "secret": "change_this_secret_key",
-        "port": 8098,
-        "max_results": 10000
+    """Load configuration from unified config.json (migrating legacy web_config.json if present)"""
+    secret = "change_this_secret_key"
+    port = 8098
+    max_results = 10000
+    
+    # Migrate & remove legacy web_config.json if found
+    if os.path.exists(WEB_CONFIG_FILE):
+        try:
+            with open(WEB_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                legacy = json.load(f)
+                secret = legacy.get("secret", secret)
+                port = legacy.get("port", port)
+                max_results = legacy.get("max_results", max_results)
+            os.remove(WEB_CONFIG_FILE)
+        except Exception:
+            pass
+
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+                secret = cfg.get("web_ui_secret", secret)
+                port = cfg.get("web_ui_port", port)
+                max_results = cfg.get("web_ui_max_results", max_results)
+        except Exception:
+            pass
+
+    return {
+        "secret": secret,
+        "port": port,
+        "max_results": max_results
     }
-    
-    if not os.path.exists(WEB_CONFIG_FILE):
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(WEB_CONFIG_FILE, 'w') as f:
-            json.dump(default_config, f, indent=4)
-        return default_config
-    
-    with open(WEB_CONFIG_FILE, 'r') as f:
-        return json.load(f)
 
 
 def create_app():
@@ -2596,13 +2614,23 @@ def start_webui(logger, port=8098, secret=None):
         logger.info("WebUI already running")
         return True
     
-    # Update config if secret provided
+    # Update unified config if secret provided
     if secret:
-        config = get_web_config()
-        config["secret"] = secret
-        config["port"] = port
-        with open(WEB_CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=4)
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                cfg["web_ui_secret"] = secret
+                cfg["web_ui_port"] = port
+                with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(cfg, f, indent=4)
+            except Exception:
+                pass
+        if os.path.exists(WEB_CONFIG_FILE):
+            try:
+                os.remove(WEB_CONFIG_FILE)
+            except Exception:
+                pass
     
     _app = create_app()
     
