@@ -9,11 +9,9 @@ from endstone import ColorFormat, Player
 from endstone.event import (
     event_handler, BlockBreakEvent, PlayerInteractEvent, ActorKnockbackEvent,
     BlockPlaceEvent, PlayerCommandEvent, PlayerJoinEvent, PlayerQuitEvent, PlayerChatEvent,
-    PlayerInteractActorEvent, ActorExplodeEvent, PacketReceiveEvent, ScriptMessageEvent
+    ActorExplodeEvent, PacketReceiveEvent, ScriptMessageEvent
 )
-from endstone.form import ModalForm, Dropdown, ActionForm, TextInput, Button
-import endstone.form
-from endstone.inventory import ItemStack
+from endstone.form import ModalForm, Dropdown, ActionForm, TextInput
 from endstone.nbt import (
     CompoundTag, ListTag, ByteTag, ShortTag, IntTag, LongTag,
     FloatTag, DoubleTag, StringTag, ByteArrayTag, IntArrayTag
@@ -23,23 +21,19 @@ import os
 import json
 import threading
 import sqlite3
-import random
 import re
 import time as tm
-import signal
 import hashlib
 
 # Bedrock protocol packet decoding for container item tracking
 try:
-    from bedrock_protocol.packets import MinecraftPackets, MinecraftPacketIds
+    from bedrock_protocol.packets import MinecraftPackets, MinecraftPacketIds  # noqa: F401
     HAS_PACKET_LIB = True
 except ImportError:
     HAS_PACKET_LIB = False
-import requests
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict, Counter
 from copy import deepcopy
-from concurrent.futures import ThreadPoolExecutor
 import traceback
 from uuid import uuid4
 
@@ -108,10 +102,10 @@ def load_config():
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(DEFAULT_CONFIG, f, indent=4)
         return DEFAULT_CONFIG.copy()
-    
+
     with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
         config = json.load(f)
-    
+
     # Migrate missing keys from defaults and purge deprecated keys.
     updated = False
     for key, value in DEFAULT_CONFIG.items():
@@ -121,11 +115,11 @@ def load_config():
     if "auto_confiscate_unauthorized_container_theft" in config:
         del config["auto_confiscate_unauthorized_container_theft"]
         updated = True
-    
+
     if updated:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4)
-    
+
     return config
 
 # Load configuration
@@ -295,7 +289,7 @@ def init_database():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     cursor = conn.cursor()
-    
+
     # Create main interactions table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS interactions (
@@ -311,7 +305,7 @@ def init_database():
         blockdata TEXT
     )
     """)
-    
+
     # Ensure blockdata column exists (migration from older versions)
     cursor.execute("PRAGMA table_info(interactions)")
     columns = [col[1] for col in cursor.fetchall()]
@@ -494,7 +488,7 @@ def init_database():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_grief_reports_created ON grief_reports(created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_grief_reports_player ON grief_reports(primary_player)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_grief_reports_status ON grief_reports(status)")
-    
+
     conn.commit()
     return conn, cursor
 
@@ -526,7 +520,7 @@ def insert_records(records, has_blockdata=False):
                 cur.execute("""
                     INSERT INTO interactions (name, action, x, y, z, type, world, time, blockdata)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (data['name'], data['action'], data['coordinates']['x'], 
+                """, (data['name'], data['action'], data['coordinates']['x'],
                       data['coordinates']['y'], data['coordinates']['z'],
                       data['type'], data['world'], data['time'], data['blockdata']))
             else:
@@ -689,7 +683,7 @@ class AntiGriefPlugin(Plugin):
     api_version = "0.11"
     version = "1.5.13"
     depend = ["blockdata_api"]
-    
+
     # Command definitions with English descriptions
     commands = {
         "ag": {
@@ -773,7 +767,7 @@ class AntiGriefPlugin(Plugin):
             "permissions": ["antigrief.command.op"],
         },
     }
-    
+
     permissions = {
         "antigrief.command.op": {
             "description": "Operator commands",
@@ -884,7 +878,7 @@ class AntiGriefPlugin(Plugin):
             return True
         self._schedule_blockdata_connect_retry()
         return False
-    
+
     def on_enable(self) -> None:
         self.logger.info(f'{ColorFormat.YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
         self.logger.info(f'{ColorFormat.GREEN}  AntiGrief Plugin {PLUGIN_VERSION}')
@@ -892,7 +886,7 @@ class AntiGriefPlugin(Plugin):
         self.logger.info(f'{ColorFormat.YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
         self.logger.info(f'{ColorFormat.AQUA}  Config: {CONFIG_FILE}')
         self.logger.info(f'{ColorFormat.AQUA}  Data: {DATA_DIR}/')
-        
+
         if not self._connect_blockdata_services(initial=True):
             self.logger.warning(
                 f'{ColorFormat.YELLOW}  Native BlockData features are paused until '
@@ -910,12 +904,12 @@ class AntiGriefPlugin(Plugin):
         # Start WebUI even when the bridge is unavailable so historical records remain viewable.
         if ENABLE_WEBUI:
             self._start_webui()
-        
+
         self.register_events(self)
         self._start_confiscation_sweeper()
         self._start_player_inventory_snapshot_sweeper()
         self.logger.info(f'{ColorFormat.GREEN}  Plugin enabled successfully!')
-    
+
     def _start_webui(self):
         """Start the WebUI server"""
         try:
@@ -926,7 +920,7 @@ class AntiGriefPlugin(Plugin):
                 self.logger.warning(f'{ColorFormat.YELLOW}  WebUI startup failed')
         except Exception as e:
             self.logger.warning(f'{ColorFormat.YELLOW}  WebUI error: {e}')
-    
+
     def on_disable(self) -> None:
         self._shutting_down = True
         self._blockdata_retry_scheduled = False
@@ -1942,20 +1936,20 @@ class AntiGriefPlugin(Plugin):
         except Exception as error:
             self.logger.warning(f"[Rollback] Scheduler unavailable, restoring immediately: {error}")
             self._restore_native_snapshot(saved_snapshot, dimension, x, y, z, actor_name)
-    
+
     # ========================================================================
     # GUI METHODS
     # ========================================================================
-    
+
     def show_query_gui(self, sender):
         """Show coordinate query GUI"""
         player = self.server.get_player(sender.name)
         if not player:
             return
-        
+
         player_name = player.name  # Capture as string — safe across async boundary
         px, py, pz = int(player.location.x), int(player.location.y), int(player.location.z)
-        
+
         def on_submit(_player, *args):
             if not args:
                 return  # Form closed
@@ -1977,17 +1971,17 @@ class AntiGriefPlugin(Plugin):
                     values = list(response)
                 else:
                     values = list(args)
-                
+
                 x = float(values[0]) if values[0] else px
                 y = float(values[1]) if values[1] else py
                 z = float(values[2]) if values[2] else pz
                 hours = float(values[3]) if values[3] else 1.0
                 radius = float(values[4]) if values[4] else 10.0
-                
+
                 if radius > 100:
                     player.send_error_message(lang["error_radius_max"])
                     return
-                
+
                 self._execute_query(player, x, y, z, hours, radius)
             except Exception as e:
                 self.logger.warning(f"Query GUI error: {e}, args: {args}")
@@ -1995,7 +1989,7 @@ class AntiGriefPlugin(Plugin):
                     player.send_error_message(lang["error_invalid_params"])
                 except Exception:
                     pass
-        
+
         form = ModalForm(
             title=lang["gui_query_title"],
             controls=[
@@ -2008,16 +2002,16 @@ class AntiGriefPlugin(Plugin):
             on_submit=on_submit
         )
         player.send_form(form)
-    
+
     def show_search_gui(self, sender):
         """Show keyword search GUI"""
         player = self.server.get_player(sender.name)
         if not player:
             return
-        
+
         player_name = player.name  # Capture as string — safe across async boundary
         search_types = ["player", "action", "object"]
-        
+
         def on_submit(_player, *args):
             if not args:
                 return  # Form closed
@@ -2035,12 +2029,12 @@ class AntiGriefPlugin(Plugin):
                     values = list(response)
                 else:
                     values = list(args)
-                
+
                 hours = float(values[0]) if values[0] else 24.0
                 type_idx = int(values[1]) if values[1] else 0
                 keyword = values[2] if len(values) > 2 else ""
                 search_type = search_types[type_idx]
-                
+
                 self._execute_search(player, search_type, keyword, hours)
             except Exception as e:
                 self.logger.warning(f"Search GUI error: {e}, args: {args}")
@@ -2048,7 +2042,7 @@ class AntiGriefPlugin(Plugin):
                     player.send_error_message(lang["error_invalid_params"])
                 except Exception:
                     pass
-        
+
         form = ModalForm(
             title=lang["gui_search_title"],
             controls=[
@@ -2059,18 +2053,18 @@ class AntiGriefPlugin(Plugin):
             on_submit=on_submit
         )
         player.send_form(form)
-    
+
     def show_rollback_gui(self, sender):
         """Show rollback GUI form"""
         player = self.server.get_player(sender.name)
         if not player:
             return
-        
+
         player_name = player.name  # Capture as string — safe across async boundary
         # Get player position as default
         loc = player.location
         px, py, pz = int(loc.x), int(loc.y), int(loc.z)
-        
+
         def on_submit(_player, *args):
             if not args:
                 return  # Form closed
@@ -2088,14 +2082,14 @@ class AntiGriefPlugin(Plugin):
                     values = list(response)
                 else:
                     values = list(args)
-                
+
                 x = float(values[0]) if values[0] else float(px)
                 y = float(values[1]) if values[1] else float(py)
                 z = float(values[2]) if values[2] else float(pz)
                 hours = float(values[3]) if values[3] else 1.0
                 radius = float(values[4]) if values[4] else 10.0
                 player_filter = values[5].strip() if len(values) > 5 and values[5] else None
-                
+
                 self._execute_rollback(player, x, y, z, hours, radius, player_filter)
             except Exception as e:
                 self.logger.warning(f"Rollback GUI error: {e}, args: {args}")
@@ -2103,7 +2097,7 @@ class AntiGriefPlugin(Plugin):
                     player.send_error_message(lang["error_invalid_params"])
                 except Exception:
                     pass
-        
+
         form = ModalForm(
             title="Block Rollback",
             controls=[
@@ -2117,12 +2111,12 @@ class AntiGriefPlugin(Plugin):
             on_submit=on_submit
         )
         player.send_form(form)
-    
+
     def _execute_query(self, player, x, y, z, hours, radius):
         """Execute a coordinate-based query"""
         time_threshold = now_est() - timedelta(hours=hours)
         radius_sq = radius ** 2
-        
+
         results = []
         with sqlite3.connect(DB_FILE) as db:
             cur = db.cursor()
@@ -2133,20 +2127,20 @@ class AntiGriefPlugin(Plugin):
                 ORDER BY time DESC
                 LIMIT 1000
             """, (x, x, y, y, z, z, radius_sq, time_threshold.isoformat()))
-            
+
             for row in cur.fetchall():
                 results.append({
                     'name': row[0], 'action': row[1],
                     'x': row[2], 'y': row[3], 'z': row[4],
                     'type': row[5], 'world': row[6], 'time': row[7]
                 })
-        
+
         if not results:
             player.send_message(f'{ColorFormat.YELLOW}{lang["error_no_results"]}')
             return
-        
+
         player.send_message(f'{ColorFormat.GREEN}Found {len(results)} records within {radius} blocks, {hours} hours')
-        
+
         # Build output
         content = ""
         for r in results[:100]:  # Limit display
@@ -2154,23 +2148,23 @@ class AntiGriefPlugin(Plugin):
             content += f'  Pos: {r["x"]}, {r["y"]}, {r["z"]} | {r["world"]}\n'
             content += f'  Target: {r["type"]} | {r["time"]}\n'
             content += "─" * 30 + "\n"
-        
+
         player.send_form(ActionForm(
             title=f"Query Results ({len(results)} records)",
             content=content[:10000]
         ))
-    
+
     def _execute_search(self, player, search_type, keyword, hours):
         """Execute a keyword search"""
         time_threshold = now_est() - timedelta(hours=hours)
-        
+
         if search_type == "player":
             column = "name"
         elif search_type == "action":
             column = "action"
         else:
             column = "type"
-        
+
         results = []
         with sqlite3.connect(DB_FILE) as db:
             cur = db.cursor()
@@ -2181,44 +2175,44 @@ class AntiGriefPlugin(Plugin):
                 ORDER BY time DESC
                 LIMIT 1000
             """, (f"%{keyword}%", time_threshold.isoformat()))
-            
+
             for row in cur.fetchall():
                 results.append({
                     'name': row[0], 'action': row[1],
                     'x': row[2], 'y': row[3], 'z': row[4],
                     'type': row[5], 'world': row[6], 'time': row[7]
                 })
-        
+
         if not results:
             player.send_message(f'{ColorFormat.YELLOW}{lang["error_no_results"]}')
             return
-        
+
         player.send_message(f'{ColorFormat.GREEN}Found {len(results)} records for "{keyword}"')
-        
+
         content = ""
         for r in results[:100]:
             content += f'{ColorFormat.YELLOW}{r["name"]} - {r["action"]}\n'
             content += f'  Pos: {r["x"]}, {r["y"]}, {r["z"]} | {r["world"]}\n'
             content += f'  Target: {r["type"]} | {r["time"]}\n'
             content += "─" * 30 + "\n"
-        
+
         player.send_form(ActionForm(
             title=f'Search: "{keyword}" ({len(results)} records)',
             content=content[:10000]
         ))
-    
+
     # ========================================================================
     # COMMAND HANDLER
     # ========================================================================
-    
+
     def on_command(self, sender: CommandSender, command: Command, args: list[str]) -> bool:
         cmd = command.name.lower()
-        
+
         # /aghelp - Show help
         if cmd == "aghelp":
             self._show_help(sender)
             return True
-        
+
         # /ag - Query logs
         if cmd == "ag":
             if len(args) == 0:
@@ -2227,21 +2221,21 @@ class AntiGriefPlugin(Plugin):
                 else:
                     sender.send_message(f'{ColorFormat.RED}{lang["error_console_only"]}')
                 return True
-            
+
             if len(args) < 3:
                 sender.send_message(f'{ColorFormat.RED}{lang["error_format"]}')
                 return True
-            
+
             try:
                 pos_parts = args[0].split()
                 x, y, z = float(pos_parts[0]), float(pos_parts[1]) if len(pos_parts) > 1 else float(args[1]), float(pos_parts[2]) if len(pos_parts) > 2 else float(args[2])
                 hours = float(args[1]) if len(pos_parts) == 3 else float(args[3]) if len(args) > 3 else 1.0
                 radius = float(args[2]) if len(pos_parts) == 3 else float(args[4]) if len(args) > 4 else 10.0
-                
+
                 if radius > 100:
                     sender.send_message(f'{ColorFormat.RED}{lang["error_radius_max"]}')
                     return True
-                
+
                 if isinstance(sender, Player):
                     self._execute_query(sender, x, y, z, hours, radius)
                 else:
@@ -2249,7 +2243,7 @@ class AntiGriefPlugin(Plugin):
             except (ValueError, IndexError):
                 sender.send_message(f'{ColorFormat.RED}{lang["error_format"]}')
             return True
-        
+
         # /ags - Keyword search
         if cmd == "ags":
             if len(args) == 0:
@@ -2258,16 +2252,16 @@ class AntiGriefPlugin(Plugin):
                 else:
                     sender.send_message(f'{ColorFormat.RED}{lang["error_console_only"]}')
                 return True
-            
+
             if len(args) < 3:
                 sender.send_message(f'{ColorFormat.RED}{lang["error_format"]}')
                 return True
-            
+
             try:
                 search_type = args[0]
                 keyword = args[1]
                 hours = float(args[2])
-                
+
                 if isinstance(sender, Player):
                     self._execute_search(sender, search_type, keyword, hours)
                 else:
@@ -2275,152 +2269,152 @@ class AntiGriefPlugin(Plugin):
             except ValueError:
                 sender.send_message(f'{ColorFormat.RED}{lang["error_format"]}')
             return True
-        
+
         # /agban - Ban player
         if cmd == "agban":
             if len(args) == 0:
                 sender.send_message(f'{ColorFormat.RED}{lang["format_error"]}')
                 return True
-            
+
             player_name = args[0]
             reason = " ".join(args[1:]) if len(args) > 1 else "No reason provided"
-            
+
             # Load or create banlist
             banlist = {}
             if os.path.exists(BANLIST_FILE):
                 with open(BANLIST_FILE, 'r', encoding='utf-8') as f:
                     banlist = json.load(f)
-            
+
             if player_name in banlist:
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["player"]} {player_name} {lang["already_banned"]}')
                 return True
-            
+
             banlist[player_name] = {
                 "timestamp": now_est().isoformat(),
                 "reason": reason
             }
-            
+
             with open(BANLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(banlist, f, indent=4)
-            
+
             sender.send_message(f'{ColorFormat.GREEN}{lang["player"]} {player_name} {lang["banned_reason"]} {reason}')
             return True
-        
+
         # /agunban - Unban player
         if cmd == "agunban":
             if len(args) == 0:
                 sender.send_message(f'{ColorFormat.RED}{lang["format_error"]}')
                 return True
-            
+
             player_name = args[0]
-            
+
             if not os.path.exists(BANLIST_FILE):
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["blacklist_not_exist"]}')
                 return True
-            
+
             with open(BANLIST_FILE, 'r', encoding='utf-8') as f:
                 banlist = json.load(f)
-            
+
             if player_name not in banlist:
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["player"]} {player_name} {lang["not_in_blacklist"]}')
                 return True
-            
+
             del banlist[player_name]
-            
+
             with open(BANLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(banlist, f, indent=4)
-            
+
             sender.send_message(f'{ColorFormat.GREEN}{lang["player"]} {player_name} {lang["removed_from_blacklist"]}')
             return True
-        
+
         # /agbanlist - List banned players
         if cmd == "agbanlist":
             if not os.path.exists(BANLIST_FILE):
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["no_banned_players"]}')
                 return True
-            
+
             with open(BANLIST_FILE, 'r', encoding='utf-8') as f:
                 banlist = json.load(f)
-            
+
             if not banlist:
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["no_banned_players"]}')
                 return True
-            
+
             sender.send_message(f'{ColorFormat.GREEN}━━━ Banned Players ━━━')
             for name, data in banlist.items():
                 sender.send_message(f'{ColorFormat.YELLOW}{name} - {data.get("reason", "No reason")} ({data.get("timestamp", "Unknown")})')
             return True
-        
+
         # /ban-id - Ban device
         if cmd == "ban-id":
             if len(args) == 0:
                 sender.send_message(f'{ColorFormat.RED}{lang["format_error"]}')
                 return True
-            
+
             device_id = args[0]
-            
+
             banlist = {}
             if os.path.exists(BANIDLIST_FILE):
                 with open(BANIDLIST_FILE, 'r', encoding='utf-8') as f:
                     banlist = json.load(f)
-            
+
             if device_id in banlist:
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["device_id"]} {device_id} {lang["device_already_banned"]}')
                 return True
-            
+
             banlist[device_id] = {"timestamp": now_est().isoformat()}
-            
+
             with open(BANIDLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(banlist, f, indent=4)
-            
+
             sender.send_message(f'{ColorFormat.GREEN}{lang["device_id"]} {device_id} {lang["device_banned"]}')
             return True
-        
+
         # /unban-id - Unban device
         if cmd == "unban-id":
             if len(args) == 0:
                 sender.send_message(f'{ColorFormat.RED}{lang["format_error"]}')
                 return True
-            
+
             device_id = args[0]
-            
+
             if not os.path.exists(BANIDLIST_FILE):
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["device_blacklist_not_exist"]}')
                 return True
-            
+
             with open(BANIDLIST_FILE, 'r', encoding='utf-8') as f:
                 banlist = json.load(f)
-            
+
             if device_id not in banlist:
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["device_id"]} {device_id} {lang["not_in_blacklist"]}')
                 return True
-            
+
             del banlist[device_id]
-            
+
             with open(BANIDLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(banlist, f, indent=4)
-            
+
             sender.send_message(f'{ColorFormat.GREEN}{lang["device_id"]} {device_id} {lang["removed_from_blacklist"]}')
             return True
-        
+
         # /banlist-id - List banned devices
         if cmd == "banlist-id":
             if not os.path.exists(BANIDLIST_FILE):
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["no_banned_devices"]}')
                 return True
-            
+
             with open(BANIDLIST_FILE, 'r', encoding='utf-8') as f:
                 banlist = json.load(f)
-            
+
             if not banlist:
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["no_banned_devices"]}')
                 return True
-            
+
             sender.send_message(f'{ColorFormat.GREEN}━━━ Banned Devices ━━━')
             for device_id, data in banlist.items():
                 sender.send_message(f'{ColorFormat.YELLOW}{device_id} ({data.get("timestamp", "Unknown")})')
             return True
-        
+
         # /density - Entity density
         if cmd == "density":
             try:
@@ -2428,16 +2422,16 @@ class AntiGriefPlugin(Plugin):
             except ValueError:
                 size = 20
                 sender.send_message(f'{ColorFormat.YELLOW}{lang["density_default"]}')
-            
+
             self._calculate_density(sender, size)
             return True
-        
+
         # /agclean - Clean database
         if cmd == "agclean":
             if len(args) == 0:
                 sender.send_message(f'{ColorFormat.RED}{lang["error_invalid_params"]}')
                 return True
-            
+
             try:
                 hours = float(args[0])
                 self._start_cleanup(hours)
@@ -2445,13 +2439,13 @@ class AntiGriefPlugin(Plugin):
             except ValueError:
                 sender.send_message(f'{ColorFormat.RED}{lang["error_invalid_params"]}')
             return True
-        
+
         # /agcontainer - View container access logs
         if cmd == "agcontainer":
             if not isinstance(sender, Player):
                 sender.send_message(f'{ColorFormat.RED}This command must be used in-game.')
                 return True
-            
+
             player_filter = args[0] if len(args) > 0 else None
             hours = 24.0
             radius = 50.0
@@ -2462,10 +2456,10 @@ class AntiGriefPlugin(Plugin):
                     radius = float(args[2])
             except ValueError:
                 pass
-            
+
             self._execute_container_query(sender, hours, radius, player_filter)
             return True
-        
+
         # /agowner - Container ownership administration
         if cmd == "agowner":
             if not isinstance(sender, Player):
@@ -2548,35 +2542,35 @@ class AntiGriefPlugin(Plugin):
             if not isinstance(sender, Player):
                 sender.send_message(f'{ColorFormat.RED}{lang["error_console_only"]}')
                 return True
-            
+
             target_name = args[0] if args else sender.name
             target = self.server.get_player(target_name)
-            
+
             if not target:
                 sender.send_message(f'{ColorFormat.RED}{lang["error_player_offline"]}')
                 return True
-            
+
             self._show_inventory(sender, target)
             return True
-        
+
         # /agback - Rollback (experimental)
         if cmd == "agback":
             if not isinstance(sender, Player):
                 sender.send_message(f'{ColorFormat.RED}{lang["error_console_only"]}')
                 return True
-            
+
             if len(args) == 0:
                 # Show rollback GUI
                 self.show_rollback_gui(sender)
                 return True
-            
+
             if len(args) < 3:
                 sender.send_message(f'{ColorFormat.RED}Usage: /agback <hours> <x y z> <radius> [player]')
                 return True
-            
+
             try:
                 self.logger.info(f"[Rollback] Raw args ({len(args)}): {args}")
-                
+
                 # Command definition: /agback <time:float> [pos:pos] <radius:float> [player:str]
                 # Endstone passes: args[0]=time, args[1]="x y z" (pos as single string), args[2]=radius
                 hours = float(args[0])
@@ -2590,14 +2584,14 @@ class AntiGriefPlugin(Plugin):
                     return True
                 radius = float(args[2])
                 player_filter = args[3].strip() if len(args) > 3 and args[3] else None
-                
+
                 self._execute_rollback(sender, x, y, z, hours, radius, player_filter)
             except (ValueError, IndexError):
                 sender.send_message(f'{ColorFormat.RED}{lang["error_format"]}')
             return True
-        
+
         return False
-    
+
     def _show_help(self, sender):
         """Display help information"""
         sender.send_message(f'{ColorFormat.GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
@@ -2620,17 +2614,17 @@ class AntiGriefPlugin(Plugin):
         sender.send_message(f'{ColorFormat.YELLOW}/agclean <hours> - Clean old database records')
         if ENABLE_WEBUI:
             sender.send_message(f'{ColorFormat.GREEN}WebUI: http://localhost:{WEBUI_PORT}')
-    
+
     def _execute_container_query(self, sender, hours=24.0, radius=50.0, player_filter=None):
         """Query container access logs (Container Take / Container Add) near the player."""
         time_threshold = now_est() - timedelta(hours=hours)
-        
+
         # Get player pos for radius search
         px = int(sender.location.x)
         py = int(sender.location.y)
         pz = int(sender.location.z)
         radius_sq = radius ** 2
-        
+
         query = """
             SELECT name, action, x, y, z, type, world, time, blockdata FROM interactions
             WHERE action IN ('Container Take', 'Container Add', 'Container Change', 'Container NBT Change')
@@ -2638,31 +2632,31 @@ class AntiGriefPlugin(Plugin):
             AND (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
         """
         params = [time_threshold.isoformat(), px, px, py, py, pz, pz, radius_sq]
-        
+
         if player_filter:
             query += " AND name LIKE ?"
             params.append(f"%{player_filter}%")
-        
+
         query += " ORDER BY time DESC LIMIT 500"
-        
+
         results = []
         with sqlite3.connect(DB_FILE) as db:
             cur = db.cursor()
             cur.execute(query, params)
             results = cur.fetchall()
-        
+
         if not results:
             filter_msg = f" by '{player_filter}'" if player_filter else ""
             sender.send_message(f'{ColorFormat.YELLOW}No container access logs found{filter_msg} within {radius} blocks, {hours}h.')
             return
-        
+
         sender.send_message(f'{ColorFormat.GREEN}Found {len(results)} container access records')
-        
+
         # Build formatted output for the form
         content = ""
         for r in results[:100]:  # Limit display for performance
             name, action, x, y, z, item_type, world, time_str, blockdata_str = r
-            
+
             # Color code the exact container operation.
             if action == "Container Take":
                 action_marker = f"{ColorFormat.RED}▼ TAKE"
@@ -2672,7 +2666,7 @@ class AntiGriefPlugin(Plugin):
                 action_marker = f"{ColorFormat.AQUA}◆ NBT"
             else:
                 action_marker = f"{ColorFormat.YELLOW}↔ CHANGE"
-            
+
             # Parse item details from blockdata
             container_type = ""
             if blockdata_str:
@@ -2683,14 +2677,14 @@ class AntiGriefPlugin(Plugin):
                         container_type = ctype.replace("minecraft:", "")
                 except Exception:
                     pass
-            
+
             # Format time more readably
             try:
                 dt = datetime.fromisoformat(time_str)
                 time_display = dt.strftime("%m/%d %H:%M")
             except Exception:
                 time_display = time_str[:16] if time_str else "?"
-            
+
             content += f'{action_marker} {ColorFormat.YELLOW}{name}\n'
             content += f'  {ColorFormat.AQUA}{item_type}\n'
             content += f'  {ColorFormat.WHITE}@ {x}, {y}, {z}'
@@ -2698,24 +2692,24 @@ class AntiGriefPlugin(Plugin):
                 content += f' ({container_type})'
             content += f' | {time_display}\n'
             content += "─" * 30 + "\n"
-        
+
         # Show in an ActionForm with pagination info
         title = f"Container Access ({len(results)} records)"
         if player_filter:
             title += f" - {player_filter}"
-        
+
         sender.send_form(ActionForm(
             title=title,
             content=content[:10000]
         ))
-    
+
     def _calculate_density(self, sender, size):
         """Calculate entity density"""
         actors = self.server.level.actors
         if not actors:
             sender.send_message(f'{ColorFormat.YELLOW}{lang["density_none"]}')
             return
-        
+
         # Group by region — actors may despawn mid-iteration, guard each access
         regions = {}
         for actor in actors:
@@ -2727,36 +2721,36 @@ class AntiGriefPlugin(Plugin):
                 key = (rx, ry, rz, dim)
             except Exception:
                 continue  # Actor was destroyed, skip
-            
+
             if key not in regions:
                 regions[key] = []
             regions[key].append(key)  # Store the key tuple, not the actor reference
-        
+
         if not regions:
             sender.send_message(f'{ColorFormat.YELLOW}{lang["density_none"]}')
             return
-        
+
         # Find densest region
         densest = max(regions.items(), key=lambda x: len(x[1]))
         key, entries = densest
-        
+
         # Region midpoint from grid coordinates
         rx, ry, rz, dim = key
         hx = int((rx + 0.5) * size)
         hy = int((ry + 0.5) * size)
         hz = int((rz + 0.5) * size)
-        
+
         entity_count = len(entries)
-        
+
         sender.send_message(f'{ColorFormat.GREEN}━━━ {lang["density_results"]} ━━━')
         sender.send_message(f'{ColorFormat.YELLOW}{lang["density_dimension"]}: {dim}')
         sender.send_message(f'{ColorFormat.YELLOW}{lang["density_midpoint"]}: {hx}, {hy}, {hz}')
         sender.send_message(f'{ColorFormat.YELLOW}{lang["density_count"]}: {entity_count}')
-    
+
     def _start_cleanup(self, hours):
         """Start database cleanup in background"""
         global is_cleaning
-        
+
         def cleanup():
             global is_cleaning
             is_cleaning = True
@@ -2769,10 +2763,10 @@ class AntiGriefPlugin(Plugin):
                 self.logger.error(f"[AntiGrief] agclean: FAILED with error: {e}")
             finally:
                 is_cleaning = False
-        
+
         thread = threading.Thread(target=cleanup, daemon=True)
         thread.start()
-    
+
     def _show_inventory(self, sender, target):
         """Display a safe live BlockData inventory summary for an online player."""
         snapshot = self._capture_player_inventory(target, force=True)
@@ -2808,7 +2802,7 @@ class AntiGriefPlugin(Plugin):
             title=f"Inventory: {summary['player_name']}",
             content="\n".join(lines),
         ))
-    
+
     @staticmethod
     def _report_admin_name(sender):
         name = getattr(sender, 'name', None)
@@ -3783,7 +3777,7 @@ class AntiGriefPlugin(Plugin):
     # ========================================================================
     # EVENT HANDLERS
     # ========================================================================
-    
+
     @event_handler
     def on_block_break(self, event: BlockBreakEvent):
         """Capture the live block/container before destruction and log the break."""
@@ -3851,17 +3845,17 @@ class AntiGriefPlugin(Plugin):
         player_name = str(player.name)
         bx, by, bz = int(block.x), int(block.y), int(block.z)
         dimension = str(player.location.dimension.name)
-        
+
         # Get the ACTUAL placed block type — event.block is the position which
         # may still show air at the time of the event. Try multiple approaches.
         block_type_str = "minecraft:air"
-        
+
         # Method 1: block_placed_state (most reliable)
         try:
             block_type_str = str(event.block_placed_state.type)
         except (AttributeError, Exception):
             pass
-        
+
         # Method 2: block_against (the block clicked on, hinting what was placed nearby)
         # Method 3: Fall back to event.block.type
         if block_type_str == "minecraft:air":
@@ -3869,18 +3863,18 @@ class AntiGriefPlugin(Plugin):
                 block_type_str = str(block.type)
             except Exception:
                 pass
-        
+
         # If still air, try to get the block at the position after a tick delay
         # For now, log what we have and mark it
         if ":" not in block_type_str and "." in block_type_str:
             block_type_str = block_type_str.split(".")[-1].lower()
-        
+
         # Track recent placements so interact handler can suppress duplicates
         if not hasattr(self, '_recent_placements'):
             self._recent_placements = {}
         placement_key = f"{player_name}:{bx},{by},{bz}"
         self._recent_placements[placement_key] = tm.time()
-        
+
         data_buffers['place'].append({
             'name': player_name,
             'action': lang["action_place"],
@@ -3910,8 +3904,8 @@ class AntiGriefPlugin(Plugin):
                 self.server.scheduler.run_task(self, register_owner, delay=1)
             except Exception:
                 register_owner()
-        
-    
+
+
     def _snapshot_player_inventory(self, player_name):
         """Take a snapshot of a player's inventory as {item_type_str: count}.
         Accepts a player NAME (string) and re-resolves to avoid stale proxies."""
@@ -4118,10 +4112,10 @@ class AntiGriefPlugin(Plugin):
             dim_name = player.location.dimension.name
         except (RuntimeError, SystemError, OSError):
             return  # Stale proxy — skip silently
-        
+
         if block_type_str == "minecraft:air":
             return
-        
+
         # Skip logging interactions that are actually block placements.
         # When a player places a block, both InteractEvent and PlaceEvent fire.
         # We suppress the interact if this block+player was just logged as a placement.
@@ -4135,7 +4129,7 @@ class AntiGriefPlugin(Plugin):
             for key, place_time in self._recent_placements.items():
                 if key.startswith(f"{player_name}:") and now - place_time < 0.5:
                     return  # Suppress this interact — it's from a block placement
-        
+
         # Resolve ownership before opening the native tracking session.
         container_owner = None
         container_authorized = True
@@ -4209,9 +4203,9 @@ class AntiGriefPlugin(Plugin):
             'time': now_est().isoformat(),
             'blockdata': interaction_blockdata,
         })
-        
-    
-    
+
+
+
     @event_handler
     def on_actor_knockback(self, event: ActorKnockbackEvent):
         """Log entity damage events"""
@@ -4219,12 +4213,12 @@ class AntiGriefPlugin(Plugin):
         try:
             actor_type = str(event.actor.type)
             if ONLY_IMPORTANT_ANIMAL:
-                important = ["minecraft:horse", "minecraft:pig", "minecraft:wolf", 
+                important = ["minecraft:horse", "minecraft:pig", "minecraft:wolf",
                             "minecraft:cat", "minecraft:sniffer", "minecraft:parrot",
                             "minecraft:donkey", "minecraft:mule", "minecraft:villager"]
                 if actor_type not in important:
                     return
-            
+
             ax = int(event.actor.location.x)
             ay = int(event.actor.location.y)
             az = int(event.actor.location.z)
@@ -4235,7 +4229,7 @@ class AntiGriefPlugin(Plugin):
             return  # Actor/source proxy is stale — silently skip
         except Exception:
             return  # Any other proxy access failure
-        
+
         data_buffers['animal'].append({
             'name': source_name,
             'action': lang["action_attack"],
@@ -4244,7 +4238,7 @@ class AntiGriefPlugin(Plugin):
             'world': dim_name,
             'time': now_est().isoformat()
         })
-    
+
     @event_handler
     def on_explosion(self, event: ActorExplodeEvent):
         """Capture every affected block and container before explosion damage."""
@@ -4316,7 +4310,7 @@ class AntiGriefPlugin(Plugin):
                 z = int(payload.get("z"))
                 dim = str(payload.get("dim"))
                 items = payload.get("items", [])
-                
+
                 # Cache the backup
                 self._container_backups[(x, y, z, dim)] = items
                 self.logger.info(f"[AntiGrief] Cached {len(items)} items for container at {x},{y},{z} in {dim}")
@@ -4327,27 +4321,27 @@ class AntiGriefPlugin(Plugin):
     def on_player_join(self, event: PlayerJoinEvent):
         """Handle player join - check bans"""
         player = event.player
-        
+
         # Check player ban
         if os.path.exists(BANLIST_FILE):
             with open(BANLIST_FILE, 'r', encoding='utf-8') as f:
                 banlist = json.load(f)
-            
+
             if player.name in banlist:
                 reason = banlist[player.name].get("reason", "Banned")
                 player.kick(f'{lang["you_are_banned"]} {reason}')
                 return
-        
+
         # Check device ban
         if os.path.exists(BANIDLIST_FILE):
             with open(BANIDLIST_FILE, 'r', encoding='utf-8') as f:
                 banlist = json.load(f)
-            
+
             device_id = player.device_id if hasattr(player, 'device_id') else None
             if device_id and device_id in banlist:
                 player.kick(f'{lang["device_banned_at"]} {banlist[device_id].get("timestamp", "Unknown")}')
                 return
-        
+
         # Retry only administrator-confirmed rollback recoveries after inventory is ready.
         if ROLLBACK_RECOVERY_ENABLED:
             player_name = str(player.name)
@@ -4368,7 +4362,7 @@ class AntiGriefPlugin(Plugin):
 
         # Log join
         self.logger.info(f'{ColorFormat.GREEN}{player.name} ({lang["system_name"]}: {player.device_os if hasattr(player, "device_os") else "Unknown"}) {lang["joined_game"]}')
-    
+
     @event_handler
     def on_player_quit(self, event: PlayerQuitEvent):
         """Keep the last exact snapshot but mark it as offline in the WebUI."""
@@ -4383,53 +4377,53 @@ class AntiGriefPlugin(Plugin):
         """Anti-spam for chat messages"""
         player = event.player
         now = tm.time()
-        
+
         # Clean old entries
         player_messages[player.name] = [t for t in player_messages[player.name] if now - t < 10]
         player_messages[player.name].append(now)
-        
+
         if len(player_messages[player.name]) > MESSAGE_MAX:
             # Auto-ban for spam
             banlist = {}
             if os.path.exists(BANLIST_FILE):
                 with open(BANLIST_FILE, 'r', encoding='utf-8') as f:
                     banlist = json.load(f)
-            
+
             banlist[player.name] = {
                 "timestamp": now_est().isoformat(),
                 "reason": lang["spam_msg_ban"]
             }
-            
+
             with open(BANLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(banlist, f, indent=4)
-            
+
             player.kick(lang["spam_msg_ban"])
             self.logger.warning(f'{ColorFormat.RED}{player.name} {lang["spam_msg_notify"]}')
-    
+
     @event_handler
     def on_player_command(self, event: PlayerCommandEvent):
         """Anti-spam for commands"""
         player = event.player
         now = tm.time()
-        
+
         # Clean old entries
         player_commands[player.name] = [t for t in player_commands[player.name] if now - t < 10]
         player_commands[player.name].append(now)
-        
+
         if len(player_commands[player.name]) > COMMAND_MAX:
             # Auto-ban for command spam
             banlist = {}
             if os.path.exists(BANLIST_FILE):
                 with open(BANLIST_FILE, 'r', encoding='utf-8') as f:
                     banlist = json.load(f)
-            
+
             banlist[player.name] = {
                 "timestamp": now_est().isoformat(),
                 "reason": lang["spam_cmd_ban"]
             }
-            
+
             with open(BANLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(banlist, f, indent=4)
-            
+
             player.kick(lang["spam_cmd_ban"])
             self.logger.warning(f'{ColorFormat.RED}{player.name} {lang["spam_cmd_notify"]}')

@@ -20,13 +20,13 @@ except ImportError:
 def clean_old_interactions(db_path, hours_threshold):
     """
     Clean database records older than specified hours
-    
+
     Args:
         db_path: Database file path
         hours_threshold: Delete records older than this many hours
     """
     global is_running, vac_msg, msg1, msg2
-    
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     is_running = True

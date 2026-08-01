@@ -8,6 +8,7 @@ import json
 import sqlite3
 import threading
 import html
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 # Eastern timezone (same as main plugin)
@@ -19,12 +20,11 @@ except ImportError:
 
 def now_est():
     return datetime.now(EASTERN_TZ)
-from typing import Optional
 
 # Check for required dependencies
 try:
     from fastapi import FastAPI, Query, Depends, HTTPException, Request
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi.responses import HTMLResponse
     from fastapi.middleware.cors import CORSMiddleware
     import uvicorn
     WEBUI_AVAILABLE = True
@@ -290,7 +290,7 @@ def get_web_config():
     secret = "change_this_secret_key"
     port = 8098
     max_results = 10000
-    
+
     # Migrate & remove legacy web_config.json if found
     if os.path.exists(WEB_CONFIG_FILE):
         try:
@@ -327,18 +327,18 @@ def create_app():
         description="Player Behavior Logging Dashboard",
         version="1.5.13"
     )
-    
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     web_config = get_web_config()
     SECRET_KEY = web_config.get("secret", "change_this_secret_key")
     MAX_RESULTS = web_config.get("max_results", 10000)
-    
+
     def verify_secret(request: Request):
         """Verify API secret key"""
         secret = request.headers.get("X-Secret-Key") or request.query_params.get("secret")
@@ -499,7 +499,7 @@ def create_app():
     async def dashboard():
         """Main dashboard page"""
         return get_dashboard_html()
-    
+
     @app.get("/api/logs")
     async def get_logs(
         hours: float = Query(24, description="Hours to look back"),
@@ -516,24 +516,24 @@ def create_app():
         """Retrieve logs with optional filters and pagination"""
         if not os.path.exists(DB_FILE):
             return {"logs": [], "total": 0, "total_count": 0, "offset": 0, "limit": limit}
-        
+
         time_threshold = now_est() - timedelta(hours=hours)
-        
+
         where_clause = "WHERE time >= ?"
         params = [time_threshold.isoformat()]
-        
+
         if x is not None and y is not None and z is not None and radius:
             where_clause += " AND (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?"
             params.extend([x, x, y, y, z, z, radius ** 2])
-        
+
         if player:
             where_clause += " AND name LIKE ?"
             params.append(f"%{player}%")
-        
+
         if action:
             where_clause += " AND action LIKE ?"
             params.append(f"%{action}%")
-        
+
         # Get total count for pagination
         total_count = 0
         effective_limit = min(limit, MAX_RESULTS)
@@ -541,7 +541,7 @@ def create_app():
             cur = db.cursor()
             cur.execute(f"SELECT COUNT(*) FROM interactions {where_clause}", params)
             total_count = cur.fetchone()[0]
-        
+
         query = f"""
             SELECT i.name, i.action, i.x, i.y, i.z, i.type, i.world, i.time,
                    i.blockdata, i.id,
@@ -557,7 +557,7 @@ def create_app():
         """
         params.append(effective_limit)
         params.append(max(0, offset))
-        
+
         results = []
         with sqlite3.connect(DB_FILE) as db:
             cur = db.cursor()
@@ -593,7 +593,7 @@ def create_app():
                     or parsed_blockdata.get("before_nbt")
                     or parsed_blockdata.get("after_nbt")
                 )
-                
+
                 # Pre-render container detail and shulker HTML server-side
                 action = row[1]
                 target_text = row[5] or ''
@@ -606,7 +606,7 @@ def create_app():
                         amt = bd.get('amount', 1)
                         arrow = '\u2192' if action == 'Container Add' else '\u2190'
                         log_entry["container_detail"] = f"{ct} {arrow} {item} x{amt}"
-                        
+
                         # Build item metadata HTML (custom name, enchantments, lore)
                         meta_html = ""
                         cust_name = bd.get('custom_name')
@@ -628,12 +628,12 @@ def create_app():
                             )
                         lore_lines = bd.get('lore', [])
                         if lore_lines:
-                            lore_text = "<br>".join(str(l) for l in lore_lines)
+                            lore_text = "<br>".join(str(line) for line in lore_lines)
                             meta_html += (
                                 f'<div style="color:#9ca3af;font-style:italic;font-size:0.6rem;'
                                 f'margin-top:1px">{lore_text}</div>'
                             )
-                        
+
                         sc = bd.get('shulker_contents')
                         if sc and len(sc) > 0:
                             # Build clickable details/summary with ALL items
@@ -667,7 +667,7 @@ def create_app():
                                 # Lore
                                 c_lore = c.get('lore', [])
                                 if c_lore:
-                                    lore_str = "<br>".join(str(l) for l in c_lore)
+                                    lore_str = "<br>".join(str(line) for line in c_lore)
                                     rows_html += (
                                         f'<div style="color:#9ca3af;font-style:italic;font-size:0.55rem;'
                                         f'padding-left:8px">{lore_str}</div>'
@@ -689,7 +689,7 @@ def create_app():
                             log_entry["shulker_html"] = f'{item} x{amt}{meta_html}'
                     except Exception:
                         pass
-                
+
                 # Fallback: parse old-format display text with [...] shulker list
                 if not log_entry["shulker_html"] and action in ('Container Take', 'Container Add', 'Container Change'):
                     bracket_start = target_text.find(' [')
@@ -719,11 +719,11 @@ def create_app():
                                 f'border-radius:4px;max-height:200px;overflow-y:auto">'
                                 f'{rows_html}</div></details>'
                             )
-                
+
                 results.append(log_entry)
-        
+
         return {"logs": results, "total": len(results), "total_count": total_count, "offset": offset, "limit": effective_limit}
-    
+
     @app.get("/api/logs/{log_id}/blockdata")
     async def get_log_blockdata(log_id: int, _: bool = Depends(verify_secret)):
         """Return the complete structured payload for one interaction row."""
@@ -998,12 +998,12 @@ def create_app():
         """Debug endpoint — dump last 20 container events with all fields"""
         if not os.path.exists(DB_FILE):
             return {"events": [], "error": "DB not found"}
-        
+
         with sqlite3.connect(DB_FILE) as db:
             cur = db.cursor()
             cur.execute("""
-                SELECT name, action, x, y, z, type, world, time, blockdata 
-                FROM interactions 
+                SELECT name, action, x, y, z, type, world, time, blockdata
+                FROM interactions
                 WHERE action LIKE '%Container%'
                 ORDER BY time DESC LIMIT 20
             """)
@@ -1020,7 +1020,7 @@ def create_app():
                     "blockdata_len": len(row[8]) if len(row) > 8 and row[8] else 0
                 })
         return {"events": events, "count": len(events)}
-    
+
     @app.get("/api/stats")
     async def get_stats(
         hours: float = Query(24, description="Hours to look back"),
@@ -1034,57 +1034,57 @@ def create_app():
                 "actions": {},
                 "top_players": []
             }
-        
+
         time_threshold = now_est() - timedelta(hours=hours)
-        
+
         with sqlite3.connect(DB_FILE) as db:
             cur = db.cursor()
-            
+
             # Total events
             cur.execute("SELECT COUNT(*) FROM interactions WHERE time >= ?", (time_threshold.isoformat(),))
             total = cur.fetchone()[0]
-            
+
             # Unique players
             cur.execute("SELECT COUNT(DISTINCT name) FROM interactions WHERE time >= ?", (time_threshold.isoformat(),))
             unique_players = cur.fetchone()[0]
-            
+
             # Actions breakdown
             cur.execute("SELECT action, COUNT(*) FROM interactions WHERE time >= ? GROUP BY action", (time_threshold.isoformat(),))
             actions = dict(cur.fetchall())
-            
+
             # Top players
             cur.execute("SELECT name, COUNT(*) as cnt FROM interactions WHERE time >= ? GROUP BY name ORDER BY cnt DESC LIMIT 10", (time_threshold.isoformat(),))
             top_players = [{"name": row[0], "count": row[1]} for row in cur.fetchall()]
-        
+
         return {
             "total_events": total,
             "unique_players": unique_players,
             "actions": actions,
             "top_players": top_players
         }
-    
+
     @app.get("/api/bans")
     async def get_bans(_: bool = Depends(verify_secret)):
         """Get banned players and devices"""
         banlist_file = os.path.join(DATA_DIR, "banlist.json")
         banidlist_file = os.path.join(DATA_DIR, "banidlist.json")
-        
+
         players = {}
         devices = {}
-        
+
         if os.path.exists(banlist_file):
             with open(banlist_file, 'r') as f:
                 players = json.load(f)
-        
+
         if os.path.exists(banidlist_file):
             with open(banidlist_file, 'r') as f:
                 devices = json.load(f)
-        
+
         return {
             "players": [{"name": k, **v} for k, v in players.items()],
             "devices": [{"id": k, **v} for k, v in devices.items()]
         }
-    
+
     return app
 
 
@@ -2034,7 +2034,7 @@ def get_dashboard_html():
                 tbody.innerHTML = data.logs.map(log => {
                     let detailHtml = '';
                     let targetHtml = escapeHtml(log.target || '\u2014');
-                    
+
                     // Use server-rendered container detail and shulker HTML
                     if (log.container_detail) {
                         detailHtml = '<div class="container-detail">' + escapeHtml(log.container_detail) + '</div>';
@@ -2605,15 +2605,15 @@ def get_dashboard_html():
 def start_webui(logger, port=8098, secret=None):
     """Start the WebUI server in a background thread"""
     global _server_thread, _app
-    
+
     if not WEBUI_AVAILABLE:
         logger.warning("FastAPI/uvicorn not installed. Run: pip install fastapi uvicorn")
         return False
-    
+
     if _server_thread and _server_thread.is_alive():
         logger.info("WebUI already running")
         return True
-    
+
     # Update unified config if secret provided
     if secret:
         if os.path.exists(CONFIG_FILE):
@@ -2631,13 +2631,13 @@ def start_webui(logger, port=8098, secret=None):
                 os.remove(WEB_CONFIG_FILE)
             except Exception:
                 pass
-    
+
     _app = create_app()
-    
+
     def run_server():
         uvicorn.run(_app, host="0.0.0.0", port=port, log_level="warning")
-    
+
     _server_thread = threading.Thread(target=run_server, daemon=True)
     _server_thread.start()
-    
+
     return True
