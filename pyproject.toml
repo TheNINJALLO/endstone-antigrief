@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "endstone-antigrief"
-version = "1.5.2"
+version = "1.5.14"
 description = "BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, and WebUI for Endstone"
 readme = "README.md"
 license = "MIT"

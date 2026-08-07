@@ -4,7 +4,7 @@
 lang = {
     "lang-version": "1.2.0",
     "language": "English",
-    
+
     # Command descriptions
     "cmd_ty_desc": "Query player & entity behavior records -- Format: /ty x y z time(hours) radius",
     "cmd_tyhelp_desc": "View AntiGrief command help",
@@ -19,13 +19,13 @@ lang = {
     "cmd_tyo_desc": "View player inventory -- Format: /tyo playername",
     "cmd_tyclean_desc": "Clean database records older than specified time -- Format: /tyclean time(hours) (OP only)",
     "cmd_density_desc": "Detect the area with highest entity density -- Format: /density area_size (OP only)",
-    
+
     # Plugin status messages
     "plugin_enabled": "AntiGrief enabled - Version",
     "config_location": "Config file located at",
     "data_location": "Data files located at",
     "project_url": "Project URL",
-    
+
     # Help messages
     "help_title": "AntiGrief Command Usage",
     "help_tyban": "Use /tyban <player> [reason] to blacklist a player",
@@ -40,7 +40,7 @@ lang = {
     "help_tyo": "Use /tyo <player> to view player inventory",
     "help_tyclean": "Use /tyclean <hours> to clean old database records",
     "help_density": "Use /density <size> to find highest entity density area",
-    
+
     # Error messages
     "error_format": "Command format error! Please check your input",
     "error_radius_max": "Maximum query radius is 100!",
@@ -50,7 +50,7 @@ lang = {
     "error_invalid_params": "Invalid parameters",
     "error_player_offline": "Error: Player not online or invalid parameters",
     "error_db_clean": "An unknown error occurred during database cleaning",
-    
+
     # Query results
     "query_found": "Found records for coordinate radius",
     "query_keyword_found": "Found records for keyword",
@@ -60,7 +60,7 @@ lang = {
     "query_see_popup": "Please check the popup window",
     "query_page": "Page",
     "query_no_data": "No record data",
-    
+
     # Data labels
     "label_actor": "Actor",
     "label_action": "Action",
@@ -70,11 +70,11 @@ lang = {
     "label_dimension": "Dimension",
     "label_radius": "Radius",
     "label_keyword": "Keyword",
-    
+
     # Pagination
     "next_page": "Next Page",
     "prev_page": "Previous Page",
-    
+
     # Ban system
     "format_error": "Format error",
     "player": "Player",
@@ -89,7 +89,7 @@ lang = {
     "no_banned_players": "No players in the blacklist",
     "banned_at": "on",
     "banned": "Banned",
-    
+
     # Device ban
     "device_id": "Device ID",
     "device_already_banned": "is already in the device blacklist, do not add duplicates",
@@ -97,13 +97,13 @@ lang = {
     "device_blacklist_created": "Device blacklist file created automatically",
     "device_blacklist_not_exist": "Device blacklist file does not exist",
     "no_banned_devices": "No devices in the blacklist",
-    
+
     # Anti-spam
     "spam_cmd_ban": "You have been banned for sending too many commands in a short time",
     "spam_msg_ban": "You have been banned for sending too many messages in a short time",
     "spam_cmd_notify": "Banned for command spam",
     "spam_msg_notify": "Banned for message spam",
-    
+
     # Player join/kick
     "you_are_banned": "You have been banned. Reason:",
     "ban_time": "Ban time",
@@ -112,14 +112,14 @@ lang = {
     "banned_device_tried": "Banned device attempted to join, kicked",
     "system_name": "System name",
     "joined_game": "joined the game",
-    
+
     # Inventory
     "item_slot": "Slot",
     "item_name": "Item",
     "item_quantity": "Qty",
     "inventory_of": "'s Inventory",
     "inventory_empty": "This player's inventory is empty",
-    
+
     # Database cleanup
     "db_clean_complete": "Cleanup complete, database organized",
     "db_error": "Error occurred",
@@ -127,11 +127,11 @@ lang = {
     "db_data_older": "data older than",
     "db_restructured": "Database restructured to free space",
     "db_lines": "lines",
-    
+
     # Rollback
     "rollback_start": "Starting restoration for",
     "rollback_blocks": "blocks within",
-    
+
     # Entity density
     "density_default": "No size provided, using default 20 blocks",
     "density_dimension": "Highest density area is in dimension",
@@ -143,7 +143,7 @@ lang = {
     "density_results": "Entity Density Results",
     "density_teleport": "Teleport to Area",
     "density_print": "Print to Chat",
-    
+
     # GUI Forms
     "gui_query_title": "AntiGrief Query Menu",
     "gui_enter_coords": "Enter query coordinates",
@@ -152,7 +152,7 @@ lang = {
     "gui_search_title": "AntiGrief Keyword Search",
     "gui_search_type": "Select search type (player, action, object)",
     "gui_enter_keyword": "Enter search keyword",
-    
+
     # Actions
     "action_interact": "Interact",
     "action_break": "Break",
@@ -161,7 +161,7 @@ lang = {
     "action_explode": "Explode",
     "action_piston_push": "Piston Push",
     "action_piston_pull": "Piston Pull",
-    
+
     # WebUI
     "webui_started": "WebUI started on port",
 }
