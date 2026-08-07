@@ -1,0 +1,37 @@
+{
+    "format_version": 2,
+    "header": {
+        "name": "AntiGrief Companion",
+        "description": "Companion behavior pack for the Endstone AntiGrief plugin. Captures container inventories via the Script API and relays them to Endstone to enable full container rollback.",
+        "uuid": "b7c5e2a1-d4f3-4c6b-9e8a-0d1f2e3f4a5b",
+        "version": [
+            1,
+            0,
+            0
+        ],
+        "min_engine_version": [
+            1,
+            21,
+            40
+        ]
+    },
+    "modules": [
+        {
+            "type": "script",
+            "language": "javascript",
+            "uuid": "c8d6f3b2-e5f4-4d7c-0a9b-1e2f3a4b5c6d",
+            "entry": "scripts/main.js",
+            "version": [
+                1,
+                0,
+                0
+            ]
+        }
+    ],
+    "dependencies": [
+        {
+            "module_name": "@minecraft/server",
+            "version": "beta"
+        }
+    ]
+}

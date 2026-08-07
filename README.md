@@ -1,151 +1,172 @@
-# AntiGrief Plugin v1.3.1
+# AntiGrief Plugin v1.5.1
 
+A player-behavior audit, exact container backup, rollback, and security dashboard plugin for Endstone Minecraft Bedrock servers.
 
-[![Python](https://img.shields.io/badge/python-3.9+-green.svg)](https://www.python.org/)
+## What changed in v1.5.1
 
-A comprehensive player behavior logging, rollback, and anti-grief plugin for Endstone Minecraft Bedrock servers with a built-in WebUI dashboard.
+AntiGrief now uses **Endstone BlockData API** as its native block and container data source. Container records are no longer limited to item IDs and counts. The plugin captures the live block actor and stores:
 
-## ✨ Features
+- Block type, runtime ID, block states, dimension, coordinates, and revision
+- Canonical block-entity NBT and raw SNBT
+- Every occupied container slot
+- Full item payloads, including names, lore, enchantments, durability, nested shulker contents, and other supported tags
+- Before-and-after snapshots for container access auditing
+- Snapshot IDs that link event rows to the full NBT record in the WebUI
 
-### 🔍 Behavior Logging
-- **Block Events**: Break, place, explosions — all logged with full block state data
-- **Container Tracking**: Tracks every item added/removed from chests, shulkers, barrels, etc.
-- **Combat**: Entity damage and attack logging
-- **Players**: Join events, command usage, chat messages
-- **Anti-Spam**: Automatic message/command rate limiting with configurable thresholds
+Rollback recreates the block in the correct dimension, waits one server tick for its block actor to exist, then atomically restores its states, block-entity NBT, and exact inventory through BlockData.
 
-### ⏪ Block Rollback
-- **Area Rollback**: Restore broken/placed blocks within a radius and time window
-- **Block States**: Restores block orientation, open state, and other properties
-- **Container Items**: Restores items inside containers using `/replaceitem` commands
-- **Player Filter**: Rollback changes from a specific player only
-- **GUI Support**: Interactive form for easy rollback without memorizing syntax
+## Required dependency
 
-### 🌐 WebUI Dashboard
-- Aurora-themed dark mode interface
-- Real-time log filtering and search
-- Statistics overview
-- Ban list management
-- No additional setup required — just works!
+Install a **matching release** of [`TheNINJALLO/endstone-blockdata-api`](https://github.com/TheNINJALLO/endstone-blockdata-api) before AntiGrief.
 
-### 🛡️ Security
-- Player banning (by name)
-- Device banning (by device ID)
-- Anti-spam protection with automatic detection
-- Configurable rate limits
+The BlockData installation must include both files from the complete platform ZIP:
 
-### 🎮 Commands
-| Command | Description | Permission |
-|---------|-------------|------------|
-| `/ag` | Query logs (GUI if no args) | Member |
-| `/ags` | Keyword search (GUI if no args) | OP |
-| `/aghelp` | Show all commands | Member |
-| `/agban <player> [reason]` | Ban a player | OP |
-| `/agunban <player>` | Unban a player | OP |
-| `/agbanlist` | List banned players | OP |
-| `/ban-id <deviceID>` | Ban a device | OP |
-| `/unban-id <deviceID>` | Unban a device | OP |
-| `/banlist-id` | List banned devices | OP |
-| `/density [size]` | Find entity density hotspot | OP |
-| `/agclean <hours>` | Clean old database records | OP |
-| `/ago [player]` | View player inventory | OP |
-| `/agback <hours> <x y z> <radius> [player]` | Rollback block changes | OP |
-| `/agcontainer [player] [hours] [radius]` | View container access logs | OP |
+1. The native `blockdata_api` plugin (`.dll` on Windows or `.so` on Linux)
+2. The matching platform-specific `endstone_blockdata_inspector` wheel containing the Python native bridge
 
-## 📦 Installation
+The BDS version, Endstone version, Python ABI, platform, and BlockData release must match. AntiGrief declares `depend = ["blockdata_api"]` and dynamically loads the bridge shipped in the matching inspector wheel.
 
-### Quick Install
-```bash
-pip install endstone_antigrief-1.3.1-py3-none-any.whl
-```
+For the current BlockData v0.4.6 release, use its complete ZIP for BDS 1.26.33, Endstone 0.11.6, and CPython 3.14. Use an older matching BlockData build when running an older BDS adapter.
 
-That's it! The plugin includes everything needed:
-- FastAPI for the WebUI
-- uvicorn as the web server
-- Bedrock protocol packet decoder for container tracking
-- All required dependencies
+## Installation
 
-## ⚙️ Configuration
+1. Stop the server.
+2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
+3. Copy the two matching BlockData files into `plugins/`.
+4. Copy `endstone_antigrief-1.5.0-py3-none-any.whl` into `plugins/`.
+5. Start the server and verify the console reports `BlockData API connected`.
+6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
-On first run, a config file is created at `plugins/antigrief_data/config.json`:
+The old `antigrief_companion_bp` is no longer required for v1.5.1. It remains in the source package only as a rollback compatibility path for database records made by older AntiGrief versions.
+
+## Configuration
 
 ```json
 {
-    "record_nature_block": true,
-    "record_human_block": true,
-    "only_record_important_animal": true,
-    "10s_message_max": 6,
-    "10s_command_max": 12,
-    "enable_web_ui": true,
-    "no_log_mobs": ["minecraft:item", "minecraft:xp_orb"],
-    "web_ui_port": 8098,
-    "web_ui_secret": "change_this_secret_key"
+  "record_nature_block": true,
+  "record_human_block": true,
+  "only_record_important_animal": true,
+  "10s_message_max": 6,
+  "10s_command_max": 12,
+  "enable_web_ui": true,
+  "no_log_mobs": ["minecraft:item", "minecraft:xp_orb"],
+  "web_ui_port": 8098,
+  "web_ui_secret": "change_this_secret_key",
+  "require_blockdata_api": true,
+  "capture_container_open_close": true,
+  "store_raw_snbt": true
 }
 ```
 
-> ⚠️ **Important**: Change `web_ui_secret` before exposing the WebUI!
+## Database layout
 
-## 🌐 WebUI Access
+### `interactions`
 
-1. Start your server with the plugin
-2. Open `http://localhost:8098` in your browser
-3. Enter your secret key (from config.json)
-4. Browse logs, view stats, manage bans
+Stores the compact event stream for block breaks, placements, explosions, interactions, attacks, joins, commands, and slot-level container changes. BlockData-backed rows include a snapshot ID or exact before/after item payloads in `blockdata`.
 
-## ⏪ Rollback Usage
+### `container_snapshots`
 
-### Command Syntax
-```
+Stores complete detached BlockData snapshots:
+
+- `snapshot_id`
+- player/reason/time
+- position and dimension
+- block type and revision
+- occupied-slot and item totals
+- canonical-NBT flag
+- full snapshot JSON
+- raw SNBT
+
+Indexes are created for event time, snapshot time, and world position. `/agclean` removes expired interaction rows and container snapshots together.
+
+## Exact container auditing
+
+When a player opens a supported container, AntiGrief stores a native baseline snapshot. When the container-close packet arrives, it captures another native snapshot and compares exact slots. Logged events include:
+
+- `Container Add`
+- `Container Take`
+- `Container Change`
+- `Container NBT Change` for non-inventory actor metadata such as custom names or locks
+
+Slot changes contain the slot, amount, full before item, full after item, revisions, and links to the before/after complete snapshots. Metadata changes include the before/after canonical actor NBT with inventory and coordinate fields removed for a clean comparison.
+
+Supported containers include chests, trapped chests, barrels, hoppers, droppers, dispensers, furnaces, blast furnaces, smokers, brewing stands, chiseled bookshelves, crafters, decorated pots, and all shulker-box colors supported by the installed BlockData adapter.
+
+## Rollback
+
+```text
 /agback <hours> <x y z> <radius> [player]
 ```
 
-### Examples
+Examples:
+
+```text
+/agback 1 100 64 -200 10
+/agback 24 100 64 -200 20 Steve
 ```
-/agback 1 100 64 -200 10          # Rollback 1 hour, 10-block radius
-/agback 24 100 64 -200 20 Steve   # Rollback Steve's changes, 24 hours
-/agback                           # Opens GUI form
+
+For a broken or exploded container, rollback:
+
+1. Recreates the original block and block states in its recorded dimension.
+2. Schedules restoration one server tick later on the Endstone server thread.
+3. Captures the new block actor revision.
+4. Applies canonical block-entity NBT and exact slot contents using optimistic revision checking.
+5. Retries a revision conflict once with an explicit force policy.
+6. Stores a new `rollback_restored` snapshot for auditing.
+
+## WebUI
+
+Open `http://SERVER-IP:8098` and authenticate with the configured secret.
+
+The event table now has a **VIEW NBT** control. The detail viewer exposes:
+
+- Full stored event or snapshot JSON
+- Canonical block-entity NBT
+- Exact inventory slots and item NBT
+- Raw SNBT, when enabled
+
+API routes:
+
+```text
+GET /api/logs
+GET /api/logs/{log_id}/blockdata
+GET /api/container-snapshots
+GET /api/container-snapshots/{snapshot_id}
+GET /api/stats
+GET /api/bans
 ```
 
-### What Rollback Can Do
-- ✅ Restore broken blocks with correct block states (orientation, etc.)
-- ✅ Remove placed blocks (set to air)
-- ✅ Restore basic container items (type + quantity)
-- ✅ Handle large stacks (auto-splits at 64)
+Pass the secret through the `X-Secret-Key` header or the existing `secret` query parameter.
 
-### Rollback Limitations (Bedrock)
-- ⚠️ Enchantments on restored items are lost (Bedrock command limitation)
-- ⚠️ Custom names/lore on items are lost
-- ⚠️ Shulker box contents inside chests are not preserved
-- ⚠️ Items only tracked if the container was opened while the plugin was active
+## Commands
 
-## 🔧 Building from Source
+| Command | Description | Permission |
+|---|---|---|
+| `/ag` | Query logs | Member |
+| `/ags` | Search logs | OP |
+| `/agback` | Roll back block and container changes | OP |
+| `/agcontainer` | View container access changes | OP |
+| `/agclean` | Remove old events and snapshots | OP |
+| `/agban`, `/agunban`, `/agbanlist` | Player bans | OP |
+| `/ban-id`, `/unban-id`, `/banlist-id` | Device bans | OP |
+| `/density` | Find entity-density hotspots | OP |
+
+## Building
 
 ```bash
-pip wheel --no-deps -w dist .
+python -m pip install build hatchling
+python -m build
+pytest -q
 ```
 
-## 📝 Version History
+The AntiGrief wheel is pure Python. The BlockData native bridge is not bundled into it and must come from the matching BlockData platform release.
 
-### v1.3.1
-- 🆕 Full rebrand: commands now use `/ag` prefix instead of `/ty`
-- 🆕 Block rollback with container item restoration
-- 🆕 Container access tracking (items taken/added via packet decoding)
-- 🆕 Block state preservation during rollback (orientation, etc.)
-- 🆕 Stack overflow protection (auto-splits amounts > 64)
-- 🔧 Eastern Time (EST/EDT) with automatic DST handling
-- 🔧 Database auto-migration for blockdata column
+## License
 
-### v1.2.0
-- 🆕 Built-in WebUI dashboard
-- 🆕 GUI menus for query and search (when called without args)
-- 🆕 Entity density detection (/density)
-- 🆕 English-only for simplicity
-- 🆕 All dependencies bundled
+MIT License. The BlockData API dependency is distributed under its own Apache-2.0 license.
 
-## 📄 License
+## v1.5.1 startup crash fix
 
-MIT License
-
-## 🙏 Credits
-
-Original Author: [yuhangle](https://github.com/yuhangle)
+- Removed access to Endstone's native `Plugin.logger` property from the Python constructor.
+- Runtime state and the BlockData adapter are now initialized in `on_load()`, after Endstone attaches the native plugin wrapper.
+- This fixes the Linux SIGSEGV seen in `pybind11::type_caster_base<endstone::Logger>` during `PyPluginLoader::loadPlugins`.

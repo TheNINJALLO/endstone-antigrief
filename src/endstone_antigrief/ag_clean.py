@@ -52,15 +52,24 @@ def clean_old_interactions(db_path, hours_threshold):
         # Use the same timezone as the main plugin to match stored timestamps
         cutoff_time = (datetime.now(EASTERN_TZ) - timedelta(hours=hours_threshold)).isoformat()
 
-        delete_query = """
-            DELETE FROM interactions
-            WHERE time < ?
-        """
-
-        cursor.execute(delete_query, (cutoff_time,))
+        cursor.execute("DELETE FROM interactions WHERE time < ?", (cutoff_time,))
+        interaction_count = cursor.rowcount
+        snapshot_count = 0
+        try:
+            cursor.execute(
+                "DELETE FROM container_snapshots WHERE captured_at < ?",
+                (cutoff_time,),
+            )
+            snapshot_count = cursor.rowcount
+        except sqlite3.OperationalError:
+            # Databases created before AntiGrief v1.5 do not have this table.
+            pass
         conn.commit()
 
-        msg1 = f"Deleted {cursor.rowcount} records older than {hours_threshold} hours"
+        msg1 = (
+            f"Deleted {interaction_count} interaction records and {snapshot_count} "
+            f"container snapshots older than {hours_threshold} hours"
+        )
         vacuum_db(db_path)
         msg2 = "Database restructured to free space"
 

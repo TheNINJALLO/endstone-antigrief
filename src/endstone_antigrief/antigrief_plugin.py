@@ -1,7 +1,6 @@
 """
-AntiGrief Plugin v1.3.0 - English Only Edition
+AntiGrief Plugin v1.5.0 - BlockData Edition
 Player behavior logging, analysis, and WebUI dashboard for Endstone
-Full container rollback support (chests, barrels, shulker boxes)
 """
 
 from endstone.command import Command, CommandSender
@@ -10,7 +9,7 @@ from endstone import ColorFormat, Player
 from endstone.event import (
     event_handler, BlockBreakEvent, PlayerInteractEvent, ActorKnockbackEvent,
     BlockPlaceEvent, PlayerCommandEvent, PlayerJoinEvent, PlayerChatEvent,
-    PlayerInteractActorEvent, ActorExplodeEvent, PacketReceiveEvent
+    PlayerInteractActorEvent, ActorExplodeEvent, PacketReceiveEvent, ScriptMessageEvent
 )
 from endstone.form import ModalForm, Dropdown, ActionForm, TextInput, Button
 import endstone.form
@@ -40,10 +39,12 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor
 import traceback
+from uuid import uuid4
 
 # Import local modules
 from endstone_antigrief.lang import lang
 from endstone_antigrief import ag_clean
+from endstone_antigrief.blockdata_adapter import BlockDataAdapter, BlockDataUnavailable
 
 # ============================================================================
 # TIMEZONE — Eastern Time (America/Detroit) with automatic DST handling
@@ -63,7 +64,7 @@ def now_est():
 # CONFIGURATION
 # ============================================================================
 
-PLUGIN_VERSION = "v1.3.1"
+PLUGIN_VERSION = "v1.5.1"
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -83,7 +84,10 @@ DEFAULT_CONFIG = {
     "enable_web_ui": True,
     "no_log_mobs": ["minecraft:item", "minecraft:xp_orb"],
     "web_ui_port": 8098,
-    "web_ui_secret": "change_this_secret_key"
+    "web_ui_secret": "change_this_secret_key",
+    "require_blockdata_api": True,
+    "capture_container_open_close": True,
+    "store_raw_snbt": True
 }
 
 def load_config():
@@ -122,31 +126,36 @@ ENABLE_WEBUI = config.get("enable_web_ui", True)
 NO_LOG_MOBS = config.get("no_log_mobs", [])
 WEBUI_PORT = config.get("web_ui_port", 8098)
 WEBUI_SECRET = config.get("web_ui_secret", "change_this_secret_key")
+REQUIRE_BLOCKDATA = config.get("require_blockdata_api", True)
+CAPTURE_CONTAINER_OPEN_CLOSE = config.get("capture_container_open_close", True)
+STORE_RAW_SNBT = config.get("store_raw_snbt", True)
 
-# Container block types that may hold inventories
-CONTAINER_BLOCKS = {
-    "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
-    "minecraft:ender_chest",
-    "minecraft:undyed_shulker_box", "minecraft:shulker_box",
-    "minecraft:white_shulker_box",
-    "minecraft:orange_shulker_box", "minecraft:magenta_shulker_box",
-    "minecraft:light_blue_shulker_box", "minecraft:yellow_shulker_box",
-    "minecraft:lime_shulker_box", "minecraft:pink_shulker_box",
-    "minecraft:gray_shulker_box", "minecraft:silver_shulker_box",
-    "minecraft:light_gray_shulker_box",
-    "minecraft:cyan_shulker_box", "minecraft:purple_shulker_box",
-    "minecraft:blue_shulker_box", "minecraft:brown_shulker_box",
-    "minecraft:green_shulker_box", "minecraft:red_shulker_box",
-    "minecraft:black_shulker_box",
-    "minecraft:hopper", "minecraft:dropper", "minecraft:dispenser",
-    "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker",
-    "minecraft:lit_furnace", "minecraft:lit_blast_furnace", "minecraft:lit_smoker",
-    "minecraft:brewing_stand",
-}
+
 
 # Anti-spam tracking
 player_commands = defaultdict(list)
 player_messages = defaultdict(list)
+
+# Container tracking — blocks whose inventories we can snapshot
+CONTAINER_BLOCKS = {
+    "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
+    "minecraft:hopper", "minecraft:dropper", "minecraft:dispenser",
+    "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker",
+    "minecraft:brewing_stand", "minecraft:chiseled_bookshelf",
+    "minecraft:crafter", "minecraft:decorated_pot", "minecraft:shulker_box",
+    "minecraft:white_shulker_box", "minecraft:orange_shulker_box",
+    "minecraft:magenta_shulker_box", "minecraft:light_blue_shulker_box",
+    "minecraft:yellow_shulker_box", "minecraft:lime_shulker_box",
+    "minecraft:pink_shulker_box", "minecraft:gray_shulker_box",
+    "minecraft:light_gray_shulker_box", "minecraft:cyan_shulker_box",
+    "minecraft:purple_shulker_box", "minecraft:blue_shulker_box",
+    "minecraft:brown_shulker_box", "minecraft:green_shulker_box",
+    "minecraft:red_shulker_box", "minecraft:black_shulker_box",
+    "minecraft:undyed_shulker_box",
+}
+
+# Per-player container inventory snapshots: {player_name: {pos_key, block_type, dimension, snapshot}}
+container_snapshots = {}
 
 
 
@@ -206,12 +215,12 @@ def dict_to_nbt(data):
                 tag[k] = child
         return tag
     elif nbt_type == "list":
-        tag = ListTag()
+        list_tag = ListTag()
         for item in value:
             child = dict_to_nbt(item)
             if child is not None:
-                tag.append(child)
-        return tag
+                list_tag.append(child)
+        return list_tag
     elif nbt_type == "byte":
         return ByteTag(value)
     elif nbt_type == "short":
@@ -235,8 +244,8 @@ def dict_to_nbt(data):
 
 
 def serialize_block_data(block):
-    """Serialize a block's full data for rollback, including container inventory.
-    Returns a JSON string with block_states and optional container items.
+    """Serialize a block's data for rollback (block states only).
+    Returns a JSON string with block_states for orientation etc.
     """
     result = {}
 
@@ -248,51 +257,6 @@ def serialize_block_data(block):
     except Exception:
         pass
 
-    # Capture container inventory if this is a container block
-    block_type = str(block.type)
-    # Normalize to minecraft: prefix format (str(block.type) may return dot notation)
-    if "." in block_type and ":" not in block_type:
-        block_type = "minecraft:" + block_type.split(".")[-1].lower()
-    elif ":" not in block_type:
-        block_type = "minecraft:" + block_type.lower()
-    if block_type in CONTAINER_BLOCKS:
-        print(f"[Serialize] Block type {block_type} is container, attempting inventory capture...")
-        try:
-            state = block.capture_state()
-            has_inv = hasattr(state, 'inventory')
-            print(f"[Serialize] capture_state() ok, has inventory attr: {has_inv}")
-            if has_inv and state.inventory is not None:
-                inv = state.inventory
-                print(f"[Serialize] Inventory size: {inv.size}")
-                items = []
-                for slot in range(inv.size):
-                    try:
-                        item = inv.get_item(slot)
-                        if item is not None and str(item.type) != 'minecraft:air':
-                            entry = {
-                                "slot": slot,
-                                "type": str(item.type),
-                                "amount": item.amount if hasattr(item, 'amount') else 1,
-                                "data": item.data if hasattr(item, 'data') else 0,
-                            }
-                            # Serialize full NBT (enchantments, custom names, lore, nested items)
-                            try:
-                                if item.nbt is not None:
-                                    entry["nbt"] = nbt_to_dict(item.nbt)
-                            except Exception:
-                                pass
-                            items.append(entry)
-                    except Exception as slot_err:
-                        print(f"[Serialize] Slot {slot} read failed: {slot_err}")
-                        continue
-                print(f"[Serialize] Found {len(items)} items in container")
-                if items:
-                    result["container_items"] = items
-            else:
-                print(f"[Serialize] No inventory on state. State attrs: {[a for a in dir(state) if not a.startswith('_')]}")
-        except Exception as e:
-            print(f"[Serialize] Container inventory capture failed: {e}")
-
     return json.dumps(result) if result else ""
 
 # ============================================================================
@@ -302,6 +266,8 @@ def serialize_block_data(block):
 def init_database():
     """Initialize SQLite database with required tables"""
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     cursor = conn.cursor()
     
     # Create main interactions table
@@ -325,6 +291,31 @@ def init_database():
     columns = [col[1] for col in cursor.fetchall()]
     if 'blockdata' not in columns:
         cursor.execute("ALTER TABLE interactions ADD COLUMN blockdata TEXT")
+
+    # Full canonical BlockData snapshots are stored separately from the compact event row.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS container_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        player_name TEXT,
+        reason TEXT,
+        x INTEGER,
+        y INTEGER,
+        z INTEGER,
+        world TEXT,
+        block_type TEXT,
+        revision INTEGER,
+        captured_at TEXT,
+        occupied_slots INTEGER DEFAULT 0,
+        item_count INTEGER DEFAULT 0,
+        canonical_nbt INTEGER DEFAULT 0,
+        snapshot_json TEXT NOT NULL,
+        raw_snbt TEXT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(time)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_position ON interactions(world, x, y, z)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_container_snapshots_time ON container_snapshots(captured_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_container_snapshots_position ON container_snapshots(world, x, y, z)")
     
     conn.commit()
     return conn, cursor
@@ -339,7 +330,8 @@ data_buffers = {
     'animal': [],
     'place': [],
     'bomb': [],
-    'container_access': []
+    'container_access': [],
+    'container_snapshot': []
 }
 buffer_lock = threading.Lock()
 db_write_lock = threading.Lock()
@@ -365,6 +357,31 @@ def insert_records(records, has_blockdata=False):
                       data['coordinates']['y'], data['coordinates']['z'],
                       data['type'], data['world'], data['time']))
         db.commit()
+
+def insert_container_snapshots(records):
+    """Insert full canonical BlockData snapshots into the dedicated table."""
+    if not records:
+        return
+    with sqlite3.connect(DB_FILE) as db:
+        db.execute("PRAGMA busy_timeout=5000")
+        cur = db.cursor()
+        for record in records:
+            cur.execute("""
+                INSERT OR REPLACE INTO container_snapshots (
+                    snapshot_id, player_name, reason, x, y, z, world, block_type,
+                    revision, captured_at, occupied_slots, item_count, canonical_nbt,
+                    snapshot_json, raw_snbt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                record['snapshot_id'], record.get('player_name'), record.get('reason'),
+                record['x'], record['y'], record['z'], record['world'],
+                record.get('block_type'), record.get('revision'), record['captured_at'],
+                record.get('occupied_slots', 0), record.get('item_count', 0),
+                1 if record.get('canonical_nbt') else 0, record['snapshot_json'],
+                record.get('raw_snbt')
+            ))
+        db.commit()
+
 
 def flush_data_to_db():
     """Write buffered data to database"""
@@ -394,6 +411,10 @@ def flush_data_to_db():
             if data_buffers['container_access']:
                 insert_records(data_buffers['container_access'], has_blockdata=True)
                 data_buffers['container_access'].clear()
+            if data_buffers['container_snapshot']:
+                insert_container_snapshots(data_buffers['container_snapshot'])
+                data_buffers['container_snapshot'].clear()
+
 
 def periodic_writer():
     """Background thread for periodic database writes"""
@@ -411,6 +432,8 @@ writer_thread.start()
 
 class AntiGriefPlugin(Plugin):
     api_version = "0.11"
+    version = "1.5.1"
+    depend = ["blockdata_api"]
     
     # Command definitions with English descriptions
     commands = {
@@ -496,8 +519,14 @@ class AntiGriefPlugin(Plugin):
             "default": True,
         },
     }
-    
     def on_load(self) -> None:
+        # Endstone's native Plugin wrapper is not fully attached while Python is
+        # constructing this class. In particular, accessing self.logger from
+        # __init__ can dereference an uninitialised native logger and crash BDS.
+        # Initialise runtime state here, after the plugin has been loaded.
+        self._container_backups = {}  # Legacy behavior-pack fallback only.
+        self.blockdata = BlockDataAdapter()
+        self._blockdata_ready = False
         self.logger.info("AntiGrief Plugin loading...")
     
     def on_enable(self) -> None:
@@ -508,7 +537,21 @@ class AntiGriefPlugin(Plugin):
         self.logger.info(f'{ColorFormat.AQUA}  Config: {CONFIG_FILE}')
         self.logger.info(f'{ColorFormat.AQUA}  Data: {DATA_DIR}/')
         
-        # Start WebUI if enabled
+        self._blockdata_ready = self.blockdata.connect(self.server)
+        if self._blockdata_ready:
+            adapter = self.blockdata.capabilities.get("adapter", "unknown")
+            self.logger.info(
+                f'{ColorFormat.GREEN}  BlockData API connected: adapter={adapter}, '
+                f'capabilities={self.blockdata.capabilities}'
+            )
+        else:
+            level = self.logger.error if REQUIRE_BLOCKDATA else self.logger.warning
+            level(
+                f'{ColorFormat.RED}  BlockData API unavailable: {self.blockdata.error}. '
+                'Install the matching native plugin and platform inspector wheel.'
+            )
+
+        # Start WebUI even when the bridge is unavailable so historical records remain viewable.
         if ENABLE_WEBUI:
             self._start_webui()
         
@@ -528,7 +571,222 @@ class AntiGriefPlugin(Plugin):
     
     def on_disable(self) -> None:
         flush_data_to_db()
+        try:
+            self.server.scheduler.cancel_tasks(self)
+        except Exception:
+            pass
         self.logger.info("AntiGrief Plugin disabled, data saved.")
+
+    # ========================================================================
+    # BLOCKDATA API HELPERS
+    # ========================================================================
+
+    @staticmethod
+    def _command_dimension(dimension):
+        value = str(dimension or "overworld").strip().lower()
+        value = value.replace("minecraft:", "").replace(" ", "_")
+        aliases = {
+            "overworld": "overworld",
+            "nether": "nether",
+            "the_nether": "nether",
+            "end": "the_end",
+            "the_end": "the_end",
+        }
+        return aliases.get(value, value)
+
+    @staticmethod
+    def _block_states_argument(states):
+        if not isinstance(states, dict) or not states:
+            return ""
+        parts = []
+        for key, value in states.items():
+            key_text = json.dumps(str(key), ensure_ascii=False)
+            if isinstance(value, bool):
+                value_text = str(value).lower()
+            elif isinstance(value, str):
+                value_text = json.dumps(value, ensure_ascii=False)
+            elif value is None:
+                continue
+            else:
+                value_text = str(value)
+            parts.append(f"{key_text}={value_text}")
+        return "[" + ",".join(parts) + "]" if parts else ""
+
+    def _dispatch_in_dimension(self, dimension, command):
+        dim = self._command_dimension(dimension)
+        return self.server.dispatch_command(
+            self.server.command_sender, f"execute in {dim} run {command}"
+        )
+
+    def _queue_container_snapshot(self, snapshot, player_name, reason, captured_at=None):
+        if not self.blockdata.is_container(snapshot):
+            return None
+        snapshot_id = uuid4().hex
+        location = dict(snapshot.get("location") or {})
+        entity = self.blockdata.block_entity(snapshot) or {}
+        summary = self.blockdata.snapshot_summary(snapshot)
+        snapshot_for_storage = self.blockdata.json_safe(snapshot)
+        raw_snbt = str(entity.get("raw_snbt") or "") if STORE_RAW_SNBT else ""
+        if not STORE_RAW_SNBT and isinstance(snapshot_for_storage.get("block_entity"), dict):
+            snapshot_for_storage["block_entity"].pop("raw_snbt", None)
+
+        data_buffers['container_snapshot'].append({
+            'snapshot_id': snapshot_id,
+            'player_name': str(player_name or "System"),
+            'reason': str(reason),
+            'x': int(location.get('x', 0)),
+            'y': int(location.get('y', 0)),
+            'z': int(location.get('z', 0)),
+            'world': str(location.get('dimension') or 'overworld'),
+            'block_type': str(snapshot.get('type') or 'unknown'),
+            'revision': snapshot.get('revision'),
+            'captured_at': captured_at or now_est().isoformat(),
+            'occupied_slots': summary['occupied_slots'],
+            'item_count': summary['item_count'],
+            'canonical_nbt': summary['canonical_nbt'],
+            'snapshot_json': json.dumps(snapshot_for_storage, ensure_ascii=False, separators=(',', ':')),
+            'raw_snbt': raw_snbt,
+        })
+        return snapshot_id
+
+    def _capture_native_snapshot(self, dimension, x, y, z, player_name="System", reason="capture", store=True):
+        if not self._blockdata_ready:
+            return None, None
+        try:
+            snapshot = self.blockdata.capture(self.server, dimension, x, y, z)
+            if snapshot is None:
+                return None, None
+            snapshot_id = (
+                self._queue_container_snapshot(snapshot, player_name, reason)
+                if store else None
+            )
+            return snapshot, snapshot_id
+        except (BlockDataUnavailable, RuntimeError, SystemError, OSError) as error:
+            self.logger.warning(
+                f"[BlockData] Capture failed at {x},{y},{z} in {dimension}: {error}"
+            )
+            return None, None
+        except Exception as error:
+            self.logger.warning(
+                f"[BlockData] Unexpected capture failure at {x},{y},{z} in {dimension}: {error}"
+            )
+            return None, None
+
+    def _build_block_backup(self, block, dimension, player_name, reason):
+        snapshot, snapshot_id = self._capture_native_snapshot(
+            dimension, block.x, block.y, block.z, player_name, reason, store=True
+        )
+        if snapshot is not None:
+            backup = {
+                'schema_version': BlockDataAdapter.SCHEMA_VERSION,
+                'provider': BlockDataAdapter.PROVIDER,
+                'snapshot_id': snapshot_id,
+                'block_type': snapshot.get('type'),
+                'revision': snapshot.get('revision'),
+                'block_states': snapshot.get('states') or {},
+            }
+            # Full container payloads live in container_snapshots. Keep an inline
+            # fallback only when no durable snapshot row was queued.
+            if self.blockdata.is_container(snapshot) and snapshot_id is None:
+                backup['block_snapshot'] = snapshot
+            return backup
+
+        # Legacy fallback retains block states and behavior-pack item data.
+        saved_data = {}
+        try:
+            if block.data:
+                saved_data['block_states'] = block.data.block_states
+        except Exception:
+            pass
+        cache_key = (block.x, block.y, block.z, dimension)
+        if cache_key in self._container_backups:
+            saved_data['container_items'] = self._container_backups.pop(cache_key)
+        return saved_data
+
+    @staticmethod
+    def _load_container_snapshot(snapshot_id):
+        if not snapshot_id:
+            return None
+        try:
+            with sqlite3.connect(DB_FILE) as db:
+                row = db.execute(
+                    "SELECT snapshot_json FROM container_snapshots WHERE snapshot_id = ?",
+                    (str(snapshot_id),),
+                ).fetchone()
+            if row and row[0]:
+                decoded = json.loads(row[0])
+                return decoded if isinstance(decoded, dict) else None
+        except (sqlite3.Error, json.JSONDecodeError, TypeError, ValueError):
+            return None
+        return None
+
+    def _saved_native_snapshot(self, saved_data):
+        if not isinstance(saved_data, dict):
+            return None
+        snapshot = saved_data.get('block_snapshot')
+        if isinstance(snapshot, dict):
+            return snapshot
+        snapshot = self._load_container_snapshot(saved_data.get('snapshot_id'))
+        if snapshot is not None:
+            return snapshot
+        provider_data = saved_data.get('blockdata_api')
+        if isinstance(provider_data, dict):
+            snapshot = provider_data.get('snapshot')
+            if isinstance(snapshot, dict):
+                return snapshot
+            return self._load_container_snapshot(provider_data.get('snapshot_id'))
+        return None
+
+    def _restore_native_snapshot(self, saved_snapshot, dimension, x, y, z, actor_name="Rollback"):
+        if not self._blockdata_ready or not self.blockdata.is_container(saved_snapshot):
+            return
+        current, _ = self._capture_native_snapshot(
+            dimension, x, y, z, actor_name, 'rollback_pre_apply', store=False
+        )
+        if current is None:
+            self.logger.warning(
+                f"[Rollback] BlockData could not capture recreated container at {x},{y},{z}"
+            )
+            return
+        try:
+            patch = self.blockdata.build_restore_patch(current, saved_snapshot)
+            result = self.blockdata.apply(self.server, patch, 'fail_if_changed')
+            if not result.get('ok') and result.get('status') == 'conflict':
+                current, _ = self._capture_native_snapshot(
+                    dimension, x, y, z, actor_name, 'rollback_conflict_retry', store=False
+                )
+                if current is not None:
+                    patch = self.blockdata.build_restore_patch(current, saved_snapshot)
+                    result = self.blockdata.apply(self.server, patch, 'force')
+            if not result.get('ok'):
+                self.logger.warning(
+                    f"[Rollback] Native container restore failed at {x},{y},{z}: "
+                    f"{result.get('message', result)}"
+                )
+                return
+
+            restored, _ = self._capture_native_snapshot(
+                dimension, x, y, z, actor_name, 'rollback_restored', store=True
+            )
+            restored_items = len(self.blockdata.inventory_map(restored or saved_snapshot))
+            self.logger.info(
+                f"[Rollback] Restored canonical NBT and {restored_items} occupied slots "
+                f"at {x},{y},{z} in {dimension}"
+            )
+        except Exception as error:
+            self.logger.warning(
+                f"[Rollback] Native container restore exception at {x},{y},{z}: {error}"
+            )
+
+    def _schedule_native_restore(self, saved_snapshot, dimension, x, y, z, actor_name="Rollback"):
+        def restore_task():
+            self._restore_native_snapshot(saved_snapshot, dimension, x, y, z, actor_name)
+
+        try:
+            self.server.scheduler.run_task(self, restore_task, delay=1)
+        except Exception as error:
+            self.logger.warning(f"[Rollback] Scheduler unavailable, restoring immediately: {error}")
+            restore_task()
     
     # ========================================================================
     # GUI METHODS
@@ -540,11 +798,18 @@ class AntiGriefPlugin(Plugin):
         if not player:
             return
         
+        player_name = player.name  # Capture as string — safe across async boundary
         px, py, pz = int(player.location.x), int(player.location.y), int(player.location.z)
         
-        def on_submit(player, *args):
+        def on_submit(_player, *args):
             if not args:
                 return  # Form closed
+            # Re-resolve player from name — the pybind11 proxy passed to the
+            # callback may point to a destroyed C++ object if the player
+            # disconnected while the form was open (causes SIGSEGV).
+            player = self.server.get_player(player_name)
+            if not player:
+                return
             try:
                 # Parse response - may be JSON string, list, or separate args
                 response = args[0]
@@ -571,7 +836,10 @@ class AntiGriefPlugin(Plugin):
                 self._execute_query(player, x, y, z, hours, radius)
             except Exception as e:
                 self.logger.warning(f"Query GUI error: {e}, args: {args}")
-                player.send_error_message(lang["error_invalid_params"])
+                try:
+                    player.send_error_message(lang["error_invalid_params"])
+                except Exception:
+                    pass
         
         form = ModalForm(
             title=lang["gui_query_title"],
@@ -592,11 +860,15 @@ class AntiGriefPlugin(Plugin):
         if not player:
             return
         
+        player_name = player.name  # Capture as string — safe across async boundary
         search_types = ["player", "action", "object"]
         
-        def on_submit(player, *args):
+        def on_submit(_player, *args):
             if not args:
                 return  # Form closed
+            player = self.server.get_player(player_name)
+            if not player:
+                return
             try:
                 response = args[0]
                 if isinstance(response, str):
@@ -617,7 +889,10 @@ class AntiGriefPlugin(Plugin):
                 self._execute_search(player, search_type, keyword, hours)
             except Exception as e:
                 self.logger.warning(f"Search GUI error: {e}, args: {args}")
-                player.send_error_message(lang["error_invalid_params"])
+                try:
+                    player.send_error_message(lang["error_invalid_params"])
+                except Exception:
+                    pass
         
         form = ModalForm(
             title=lang["gui_search_title"],
@@ -636,13 +911,17 @@ class AntiGriefPlugin(Plugin):
         if not player:
             return
         
+        player_name = player.name  # Capture as string — safe across async boundary
         # Get player position as default
         loc = player.location
         px, py, pz = int(loc.x), int(loc.y), int(loc.z)
         
-        def on_submit(player, *args):
+        def on_submit(_player, *args):
             if not args:
                 return  # Form closed
+            player = self.server.get_player(player_name)
+            if not player:
+                return
             try:
                 response = args[0]
                 if isinstance(response, str):
@@ -665,7 +944,10 @@ class AntiGriefPlugin(Plugin):
                 self._execute_rollback(player, x, y, z, hours, radius, player_filter)
             except Exception as e:
                 self.logger.warning(f"Rollback GUI error: {e}, args: {args}")
-                player.send_error_message(lang["error_invalid_params"])
+                try:
+                    player.send_error_message(lang["error_invalid_params"])
+                except Exception:
+                    pass
         
         form = ModalForm(
             title="Block Rollback",
@@ -1092,7 +1374,7 @@ class AntiGriefPlugin(Plugin):
         sender.send_message(f'{ColorFormat.YELLOW}/ag [x y z] [hours] [radius] - Query logs (no args = GUI)')
         sender.send_message(f'{ColorFormat.YELLOW}/ags [type] [keyword] [hours] - Keyword search (no args = GUI)')
         sender.send_message(f'{ColorFormat.YELLOW}/agcontainer [player] [hours] [radius] - Container access logs')
-        sender.send_message(f'{ColorFormat.YELLOW}/agback <x y z> <hours> <radius> - Rollback changes')
+        sender.send_message(f'{ColorFormat.YELLOW}/agback <hours> <x y z> <radius> [player] - Rollback changes')
         sender.send_message(f'{ColorFormat.YELLOW}/ago [player] - View player inventory')
         sender.send_message(f'{ColorFormat.YELLOW}/agban <player> [reason] - Ban a player')
         sender.send_message(f'{ColorFormat.YELLOW}/agunban <player> - Unban a player')
@@ -1117,7 +1399,7 @@ class AntiGriefPlugin(Plugin):
         
         query = """
             SELECT name, action, x, y, z, type, world, time, blockdata FROM interactions
-            WHERE (action = 'Container Take' OR action = 'Container Add')
+            WHERE action IN ('Container Take', 'Container Add', 'Container Change', 'Container NBT Change')
             AND time >= ?
             AND (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
         """
@@ -1147,11 +1429,15 @@ class AntiGriefPlugin(Plugin):
         for r in results[:100]:  # Limit display for performance
             name, action, x, y, z, item_type, world, time_str, blockdata_str = r
             
-            # Color code: red for take, green for add
+            # Color code the exact container operation.
             if action == "Container Take":
                 action_marker = f"{ColorFormat.RED}▼ TAKE"
-            else:
+            elif action == "Container Add":
                 action_marker = f"{ColorFormat.GREEN}▲ ADD"
+            elif action == "Container NBT Change":
+                action_marker = f"{ColorFormat.AQUA}◆ NBT"
+            else:
+                action_marker = f"{ColorFormat.YELLOW}↔ CHANGE"
             
             # Parse item details from blockdata
             container_type = ""
@@ -1196,42 +1482,42 @@ class AntiGriefPlugin(Plugin):
             sender.send_message(f'{ColorFormat.YELLOW}{lang["density_none"]}')
             return
         
-        # Group by region
+        # Group by region — actors may despawn mid-iteration, guard each access
         regions = {}
         for actor in actors:
-            rx = int(actor.location.x // size)
-            ry = int(actor.location.y // size)
-            rz = int(actor.location.z // size)
-            dim = actor.location.dimension.name
-            key = (rx, ry, rz, dim)
+            try:
+                rx = int(actor.location.x // size)
+                ry = int(actor.location.y // size)
+                rz = int(actor.location.z // size)
+                dim = actor.location.dimension.name
+                key = (rx, ry, rz, dim)
+            except Exception:
+                continue  # Actor was destroyed, skip
             
             if key not in regions:
                 regions[key] = []
-            regions[key].append(actor)
+            regions[key].append(key)  # Store the key tuple, not the actor reference
+        
+        if not regions:
+            sender.send_message(f'{ColorFormat.YELLOW}{lang["density_none"]}')
+            return
         
         # Find densest region
         densest = max(regions.items(), key=lambda x: len(x[1]))
-        key, entities = densest
+        key, entries = densest
         
-        # Calculate actual midpoint as average of entity positions
-        cx = sum(e.location.x for e in entities) / len(entities)
-        cy = sum(e.location.y for e in entities) / len(entities)
-        cz = sum(e.location.z for e in entities) / len(entities)
-        dim = key[3]
+        # Region midpoint from grid coordinates
+        rx, ry, rz, dim = key
+        hx = int((rx + 0.5) * size)
+        hy = int((ry + 0.5) * size)
+        hz = int((rz + 0.5) * size)
         
-        # Find the entity closest to the centroid (real teleportable position)
-        closest = min(entities, key=lambda e: (e.location.x - cx)**2 + (e.location.y - cy)**2 + (e.location.z - cz)**2)
-        hx, hy, hz = int(closest.location.x), int(closest.location.y), int(closest.location.z)
-        
-        # Most common type
-        types = Counter(e.type for e in entities)
-        most_common = types.most_common(1)[0][0] if types else "Unknown"
+        entity_count = len(entries)
         
         sender.send_message(f'{ColorFormat.GREEN}━━━ {lang["density_results"]} ━━━')
         sender.send_message(f'{ColorFormat.YELLOW}{lang["density_dimension"]}: {dim}')
         sender.send_message(f'{ColorFormat.YELLOW}{lang["density_midpoint"]}: {hx}, {hy}, {hz}')
-        sender.send_message(f'{ColorFormat.YELLOW}{lang["density_count"]}: {len(entities)}')
-        sender.send_message(f'{ColorFormat.YELLOW}{lang["density_most_common"]}: {most_common}')
+        sender.send_message(f'{ColorFormat.YELLOW}{lang["density_count"]}: {entity_count}')
     
     def _start_cleanup(self, hours):
         """Start database cleanup in background"""
@@ -1260,910 +1546,149 @@ class AntiGriefPlugin(Plugin):
         return
     
     def _execute_rollback(self, sender, x, y, z, hours, radius, player_filter=None):
-        """Execute block rollback with container inventory restoration"""
-        # Flush any pending records to DB so recent actions are available
+        """Restore block state plus canonical container NBT/inventory snapshots."""
         try:
             flush_data_to_db()
-            self.logger.info(f"[Rollback] Flushed pending data to DB")
-        except Exception as e:
-            self.logger.warning(f"[Rollback] Flush failed: {e}")
-        
+        except Exception as error:
+            self.logger.warning(f"[Rollback] Flush failed: {error}")
+
         time_threshold = now_est() - timedelta(hours=hours)
         radius_sq = radius ** 2
-        
-        # Diagnostic logging
-        self.logger.info(f"[Rollback] Params: center=({x},{y},{z}), hours={hours}, radius={radius}, radius_sq={radius_sq}")
-        self.logger.info(f"[Rollback] Time threshold: {time_threshold.isoformat()}")
-        self.logger.info(f"[Rollback] Current time: {now_est().isoformat()}")
-        
-        # Debug: Check for ANY records near coords (without time filter)
-        try:
-            with sqlite3.connect(DB_FILE) as debug_db:
-                debug_cur = debug_db.cursor()
-                debug_cur.execute("""
-                    SELECT COUNT(*), MIN(time), MAX(time) FROM interactions 
-                    WHERE (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
-                """, (x, x, y, y, z, z, radius_sq))
-                debug_row = debug_cur.fetchone()
-                self.logger.info(f"[Rollback] Records near coords (no time filter): count={debug_row[0]}, earliest={debug_row[1]}, latest={debug_row[2]}")
-                
-                # Also check: any records at all with Break/Place/Explode action?
-                debug_cur.execute("""
-                    SELECT COUNT(*) FROM interactions 
-                    WHERE (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
-                    AND (action LIKE '%Break%' OR action LIKE '%Place%' OR action LIKE '%Explode%')
-                """, (x, x, y, y, z, z, radius_sq))
-                action_count = debug_cur.fetchone()[0]
-                self.logger.info(f"[Rollback] Records near coords with Break/Place/Explode action: {action_count}")
-                
-                # Sample most recent 3 records near coords
-                debug_cur.execute("""
-                    SELECT name, action, x, y, z, type, time FROM interactions 
-                    WHERE (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
-                    ORDER BY rowid DESC LIMIT 3
-                """, (x, x, y, y, z, z, radius_sq))
-                samples = debug_cur.fetchall()
-                for s in samples:
-                    self.logger.info(f"[Rollback] Sample record: name={s[0]}, action={s[1]}, pos=({s[2]},{s[3]},{s[4]}), type={s[5]}, time={s[6]}")
-                
-                # Global check: show most recent 5 records from the ENTIRE table
-                debug_cur.execute("SELECT COUNT(*) FROM interactions")
-                total = debug_cur.fetchone()[0]
-                debug_cur.execute("""
-                    SELECT name, action, x, y, z, type, time FROM interactions 
-                    ORDER BY rowid DESC LIMIT 5
-                """)
-                global_samples = debug_cur.fetchall()
-                self.logger.info(f"[Rollback] GLOBAL: {total} total records in DB. Most recent 5:")
-                for s in global_samples:
-                    self.logger.info(f"[Rollback]   {s[0]} | {s[1]} | ({s[2]},{s[3]},{s[4]}) | {s[5]} | {s[6]}")
-        except Exception as e:
-            self.logger.warning(f"[Rollback] Debug query failed: {e}")
-        
-        results = []
         with sqlite3.connect(DB_FILE) as db:
             cur = db.cursor()
+            sql = """
+                SELECT name, action, x, y, z, type, world, time, blockdata
+                FROM interactions
+                WHERE (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
+                AND time >= ?
+                AND (action LIKE '%Break%' OR action LIKE '%Place%' OR action LIKE '%Explode%')
+            """
+            params = [x, x, y, y, z, z, radius_sq, time_threshold.isoformat()]
             if player_filter:
-                cur.execute("""
-                    SELECT name, action, x, y, z, type, world, time, blockdata FROM interactions
-                    WHERE (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
-                    AND time >= ?
-                    AND name LIKE ?
-                    AND (action LIKE '%Break%' OR action LIKE '%Place%' OR action LIKE '%Explode%')
-                    ORDER BY time DESC
-                """, (x, x, y, y, z, z, radius_sq, time_threshold.isoformat(), f'%{player_filter}%'))
-            else:
-                cur.execute("""
-                    SELECT name, action, x, y, z, type, world, time, blockdata FROM interactions
-                    WHERE (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?
-                    AND time >= ?
-                    AND (action LIKE '%Break%' OR action LIKE '%Place%' OR action LIKE '%Explode%')
-                    ORDER BY time DESC
-                """, (x, x, y, y, z, z, radius_sq, time_threshold.isoformat()))
-            results = cur.fetchall()
-        
-        self.logger.info(f"[Rollback] Main query returned {len(results)} results (before dedup)")
-        
-        # Deduplicate: keep only the MOST RECENT record per position.
-        # The most recent action tells us the current state:
-        #   - Most recent = Break → block is gone → restore it
-        #   - Most recent = Place → block is there → remove it
-        # Results are ORDER BY time DESC, so first occurrence = most recent.
-        seen_positions = {}
-        for row in results:
-            bx, by, bz = int(row[2]), int(row[3]), int(row[4])
-            pos_key = (bx, by, bz)
-            if pos_key not in seen_positions:
-                seen_positions[pos_key] = row  # Keep first (most recent)
-        results = list(seen_positions.values())
-        self.logger.info(f"[Rollback] After dedup: {len(results)} unique positions")
-        
+                sql += " AND name LIKE ?"
+                params.append(f"%{player_filter}%")
+            sql += " ORDER BY time DESC"
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+        # The latest event for each world-position defines the state to undo.
+        latest = {}
+        for row in rows:
+            key = (str(row[6]), int(row[2]), int(row[3]), int(row[4]))
+            latest.setdefault(key, row)
+        results = list(latest.values())
+
         if not results:
             filter_msg = f" for player '{player_filter}'" if player_filter else ""
-            sender.send_message(f'{ColorFormat.YELLOW}No block changes found{filter_msg} in the specified area/time.')
+            sender.send_message(
+                f'{ColorFormat.YELLOW}No block changes found{filter_msg} in the specified area/time.'
+            )
             return
-        
+
         filter_msg = f" by '{player_filter}'" if player_filter else ""
-        sender.send_message(f'{ColorFormat.GREEN}{lang["rollback_start"]} {len(results)} records{filter_msg} in {radius} blocks, {hours} hours...')
-        
+        sender.send_message(
+            f'{ColorFormat.GREEN}{lang["rollback_start"]} {len(results)} records'
+            f'{filter_msg} in {radius} blocks, {hours} hours...'
+        )
+
         count = 0
-        container_count = 0
         errors = 0
+        native_restores = 0
         skipped_types = set()
-        
-        # Build dimension lookup map so we can rollback blocks in the correct dimension
-        dim_map = {}
-        try:
-            for d in self.server.level.dimensions:
-                dim_map[d.name] = d
-        except Exception:
-            pass
-        # Sender's dimension as fallback
-        sender_dim = None
-        try:
-            sender_dim = sender.location.dimension
-        except Exception:
-            pass
-        
-        # Collect container restoration tasks to run after all blocks are placed
-        container_restore_queue = []
-        
+
         for row in results:
-            action = row[1]
+            actor_name, action = str(row[0]), str(row[1])
             bx, by, bz = int(row[2]), int(row[3]), int(row[4])
             block_type_raw = str(row[5]) if row[5] else "air"
-            world_name = str(row[6]) if row[6] else ""
+            dimension = str(row[6] or "overworld")
             blockdata_str = row[8] if row[8] else ""
-            
-            # Clean block type - handle various formats
+            saved_data = {}
+            if blockdata_str:
+                try:
+                    decoded = json.loads(blockdata_str)
+                    if isinstance(decoded, dict):
+                        saved_data = decoded
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+
+            saved_snapshot = self._saved_native_snapshot(saved_data)
+            if saved_snapshot:
+                block_type_raw = str(saved_snapshot.get('type') or block_type_raw)
+                states = saved_snapshot.get('states') or saved_data.get('block_states') or {}
+            else:
+                states = saved_data.get('block_states') or {}
+
             block_type = block_type_raw
             if "." in block_type and ":" not in block_type:
                 block_type = "minecraft:" + block_type.split(".")[-1].lower()
             elif ":" not in block_type:
                 block_type = "minecraft:" + block_type.lower()
-            # Remove any angle brackets or type wrappers
             block_type = block_type.replace("<", "").replace(">", "").strip()
-            
-            # Skip if block type still looks invalid
             if not block_type or block_type == "minecraft:none" or len(block_type) < 4:
                 skipped_types.add(block_type_raw)
                 errors += 1
                 continue
-            
-            # Resolve the correct dimension for this record
-            dim = dim_map.get(world_name) or sender_dim
-            if dim is None:
-                # Last resort fallback — try Overworld
-                dim = dim_map.get("Overworld")
-            
+
             try:
                 if "Break" in action or "Explode" in action:
-                    # Restore broken/exploded block
-                    # Parse saved blockdata for block_states and container items
-                    saved_data = None
-                    if blockdata_str:
-                        try:
-                            saved_data = json.loads(blockdata_str)
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-                    
-                    # Build a single setblock command with block states
-                    states_str = ""
-                    if saved_data and "block_states" in saved_data:
-                        states = saved_data["block_states"]
-                        state_parts = []
-                        for k, v in states.items():
-                            if isinstance(v, bool):
-                                state_parts.append(f'"{k}"={str(v).lower()}')
-                            elif isinstance(v, str):
-                                state_parts.append(f'"{k}"="{v}"')
-                            else:
-                                state_parts.append(f'"{k}"={v}')
-                        if state_parts:
-                            states_str = "[" + ",".join(state_parts) + "]"
-                    
-                    # Use setblock command with 'replace' to overwrite existing blocks
-                    cmd = f'setblock {bx} {by} {bz} {block_type}{states_str} replace'
-                    result = self.server.dispatch_command(self.server.command_sender, cmd)
-                    if not result:
-                        self.logger.warning(f"[Rollback] setblock FAILED at ({bx},{by},{bz}): {block_type}{states_str}")
-                        errors += 1
-                    else:
-                        count += 1
-                    
-                    # Queue container restoration for after block is placed
-                    if saved_data and "container_items" in saved_data:
-                        self.logger.info(f"[Rollback] Queued container restore at {bx},{by},{bz} with {len(saved_data['container_items'])} items")
-                        container_restore_queue.append((dim, bx, by, bz, saved_data["container_items"]))
-                    elif saved_data:
-                        self.logger.info(f"[Rollback] Block at {bx},{by},{bz} has blockdata but NO container_items (keys: {list(saved_data.keys())})")
-                        
-                elif "Place" in action:
-                    # Remove placed blocks — use setblock air directly
-                    result = self.server.dispatch_command(
-                        self.server.command_sender,
-                        f'setblock {bx} {by} {bz} air replace'
+                    states_arg = self._block_states_argument(states)
+                    result = self._dispatch_in_dimension(
+                        dimension,
+                        f"setblock {bx} {by} {bz} {block_type}{states_arg} replace",
                     )
                     if not result:
-                        self.logger.warning(f"[Rollback] setblock air FAILED at ({bx},{by},{bz})")
+                        self.logger.warning(
+                            f"[Rollback] setblock failed at ({bx},{by},{bz}) "
+                            f"in {dimension}: {block_type}{states_arg}"
+                        )
                         errors += 1
-                    else:
+                        continue
+                    count += 1
+
+                    if saved_snapshot and self.blockdata.is_container(saved_snapshot):
+                        self._schedule_native_restore(
+                            saved_snapshot, dimension, bx, by, bz, actor_name
+                        )
+                        native_restores += 1
+                    elif saved_data.get('container_items'):
+                        # Compatibility with pre-v1.5 behavior-pack backups.
+                        items = saved_data['container_items']
+                        for index in range(0, len(items), 6):
+                            payload = json.dumps({
+                                'x': bx, 'y': by, 'z': bz, 'dim': dimension,
+                                'items': items[index:index + 6], 'clear': index == 0,
+                            }, separators=(',', ':'))
+                            self.server.dispatch_command(
+                                self.server.command_sender,
+                                f"scriptevent antigrief:container_restore {payload}",
+                            )
+
+                elif "Place" in action:
+                    result = self._dispatch_in_dimension(
+                        dimension, f"setblock {bx} {by} {bz} air replace"
+                    )
+                    if result:
                         count += 1
-            except Exception as e:
+                    else:
+                        errors += 1
+                        self.logger.warning(
+                            f"[Rollback] setblock air failed at ({bx},{by},{bz}) in {dimension}"
+                        )
+            except Exception as error:
                 skipped_types.add(block_type_raw)
                 errors += 1
-                self.logger.warning(f"Rollback error at {bx},{by},{bz} ({block_type}): {e}")
-        
-        # Restore container inventories after all blocks have been placed
-        self.logger.info(f"[Rollback] Container restore queue: {len(container_restore_queue)} containers to restore")
-        for dim, bx, by, bz, items_data in container_restore_queue:
-            if dim is None:
-                self.logger.warning(f"Cannot restore container at {bx},{by},{bz}: no dimension reference")
-                continue
-            try:
-                self.logger.info(f"[Rollback] Restoring container at {bx},{by},{bz} with {len(items_data)} items...")
-                self._restore_container_items(dim, bx, by, bz, items_data)
-                container_count += 1
-                self.logger.info(f"[Rollback] Container at {bx},{by},{bz} restored successfully")
-            except Exception as e:
-                self.logger.warning(f"Failed to restore container at {bx},{by},{bz}: {e}")
-                import traceback
-                self.logger.warning(traceback.format_exc())
-        
+                self.logger.warning(
+                    f"Rollback error at {bx},{by},{bz} ({block_type}) in {dimension}: {error}"
+                )
+
         result_msg = f'{ColorFormat.GREEN}Rollback complete: {count} blocks processed'
-        if container_count > 0:
-            result_msg += f' {ColorFormat.AQUA}({container_count} containers restored with items)'
-        if errors > 0:
+        if native_restores:
+            result_msg += f', {native_restores} full-NBT container restores queued'
+        if errors:
             result_msg += f' {ColorFormat.YELLOW}({errors} skipped)'
             if skipped_types:
                 self.logger.warning(f"Rollback skipped block types: {list(skipped_types)[:5]}")
         sender.send_message(result_msg)
-    
-    def _reconstruct_container_inventory(self, x, y, z, world):
-        """Reconstruct a container's inventory from Container Add/Take records in the DB.
-        Returns a list of items suitable for container_items in blockdata.
-        Net approach: adds increase item counts, takes decrease them."""
-        items = {}  # key: item_type, value: {'type': str, 'amount': int, ...}
-        
-        with sqlite3.connect(DB_FILE) as db:
-            cur = db.cursor()
-            # Get all Container Add/Take records at this exact position
-            cur.execute("""
-                SELECT action, type, blockdata FROM interactions
-                WHERE x = ? AND y = ? AND z = ? AND world = ?
-                AND (action = 'Container Add' OR action = 'Container Take')
-                ORDER BY rowid ASC
-            """, (x, y, z, world))
-            
-            for row in cur.fetchall():
-                action, display_type, bd_str = row
-                if not bd_str:
-                    continue
-                try:
-                    bd = json.loads(bd_str)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                
-                item_type = bd.get('item')
-                amount = bd.get('amount', 1)
-                if not item_type:
-                    continue
-                
-                if action == 'Container Add':
-                    if item_type in items:
-                        items[item_type]['amount'] += amount
-                    else:
-                        entry = {'type': item_type, 'amount': amount, 'slot': len(items)}
-                        if bd.get('custom_name'):
-                            entry['custom_name'] = bd['custom_name']
-                        if bd.get('enchantments'):
-                            entry['enchantments'] = bd['enchantments']
-                        if bd.get('shulker_contents'):
-                            entry['shulker_contents'] = bd['shulker_contents']
-                        items[item_type] = entry
-                elif action == 'Container Take':
-                    if item_type in items:
-                        items[item_type]['amount'] -= amount
-                        if items[item_type]['amount'] <= 0:
-                            del items[item_type]
-        
-        # Convert to list, reassign slots
-        result = []
-        for i, item in enumerate(items.values()):
-            if item['amount'] > 0:
-                item['slot'] = i
-                result.append(item)
-        return result
-
-    def _restore_container_items(self, dim, bx, by, bz, items_data):
-        """Restore container inventory items using /replaceitem block commands.
-        This works even though capture_state().inventory is not available in Endstone 0.11."""
-        next_overflow_slot = 27  # Use slots 27+ for overflow from large stacks
-        for item_data in items_data:
-            try:
-                slot = item_data.get("slot", 0)
-                item_type = item_data.get("type", "")
-                amount = item_data.get("amount", 1)
-                
-                if not item_type or item_type == 'minecraft:air':
-                    continue
-                
-                # Ensure minecraft: prefix
-                if ':' not in item_type:
-                    item_type = f'minecraft:{item_type}'
-                
-                # Cap at 64 per slot (Bedrock max stack), split overflow
-                remaining = amount
-                current_slot = slot
-                while remaining > 0:
-                    batch = min(remaining, 64)
-                    cmd = f'replaceitem block {bx} {by} {bz} slot.container {current_slot} {item_type} {batch}'
-                    self.server.dispatch_command(self.server.command_sender, cmd)
-                    self.logger.info(f"[Rollback] Restored {item_type} x{batch} to slot {current_slot} at {bx},{by},{bz}")
-                    remaining -= batch
-                    if remaining > 0:
-                        next_overflow_slot += 1
-                        current_slot = next_overflow_slot
-            except Exception as e:
-                self.logger.warning(f"Failed to restore item in slot {item_data.get('slot', '?')}: {e}")
-    
-    
-    # ========================================================================
-    # CONTAINER ACCESS TRACKING (Packet-Based)
-    # ========================================================================
-    # Uses bedrock-protocol-packets to decode ItemStackRequest packets (147)
-    # which contain Take/Place actions with amount + slot info. Combined with
-    # player inventory reads to resolve item types.
-    #
-    # Container slot enum values (Bedrock protocol):
-    #   7  = LevelEntityContainer (chest, generic container)
-    #   12 = CombinedHotbarAndInventoryContainer
-    #   28 = HotbarContainer
-    #   29 = InventoryContainer
-    #   30 = ShulkerBoxContainer
-    #   34 = OffhandContainer
-    #   58 = BarrelContainer
-    #   59 = CursorContainer
-    
-    # Container enum values that represent PLAYER inventory (not the container)
-    PLAYER_CONTAINER_ENUMS = {12, 28, 29, 34, 59}  # inventory, hotbar, offhand, cursor
-    
-    def _extract_item_meta(self, item):
-        """Extract metadata (custom name, enchantments, lore) from an item.
-        Returns dict with 'custom_name', 'enchantments', 'lore' keys.
-        Uses ItemMeta API first, with structured NBT fallback."""
-        meta = {'custom_name': None, 'enchantments': [], 'lore': []}
-        
-        # --- Try ItemMeta API first ---
-        try:
-            item_meta = item.item_meta
-            if item_meta is not None:
-                # Custom display name
-                try:
-                    dn = item_meta.display_name
-                    if dn:
-                        meta['custom_name'] = str(dn)
-                except Exception:
-                    pass
-                # Enchantments via ItemMeta
-                try:
-                    if hasattr(item_meta, 'has_enchants') and item_meta.has_enchants():
-                        enchants = item_meta.enchants
-                        if enchants:
-                            for ench, level in enchants.items():
-                                meta['enchantments'].append({
-                                    'name': str(ench).replace('minecraft:', ''),
-                                    'level': int(level)
-                                })
-                except Exception:
-                    pass
-                # Lore via ItemMeta
-                try:
-                    lore = item_meta.lore
-                    if lore:
-                        meta['lore'] = [str(line) for line in lore]
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        
-        # --- Structured NBT fallback (safe — no str(nbt)) ---
-        if not meta['enchantments'] or not meta['lore'] or not meta['custom_name']:
-            try:
-                nbt = item.nbt
-                if nbt is not None:
-                    # Custom name fallback via NBT
-                    if not meta['custom_name']:
-                        try:
-                            tag = nbt.get_compound('tag')
-                            if tag:
-                                display = tag.get_compound('display')
-                                if display:
-                                    dn = display.get_string('Name')
-                                    if dn:
-                                        meta['custom_name'] = str(dn)
-                        except Exception:
-                            pass
-                    # Enchantments fallback via NBT
-                    if not meta['enchantments']:
-                        try:
-                            tag = nbt.get_compound('tag')
-                            if tag:
-                                ench_tag = None
-                                try:
-                                    ench_tag = tag.get_list('ench')
-                                except Exception:
-                                    pass
-                                if ench_tag is None:
-                                    try:
-                                        ench_tag = tag.get_list('Enchantments')
-                                    except Exception:
-                                        pass
-                                if ench_tag is not None:
-                                    for ei in range(len(ench_tag)):
-                                        try:
-                                            ec = ench_tag.get_compound(ei)
-                                            if ec:
-                                                eid = ''
-                                                elvl = 0
-                                                try:
-                                                    eid = ec.get_string('id')
-                                                except Exception:
-                                                    pass
-                                                try:
-                                                    elvl = ec.get_short('lvl')
-                                                except Exception:
-                                                    pass
-                                                if eid:
-                                                    meta['enchantments'].append({
-                                                        'name': str(eid).replace('minecraft:', ''),
-                                                        'level': int(elvl)
-                                                    })
-                                        except Exception:
-                                            pass
-                        except Exception:
-                            pass
-                    # Lore fallback via NBT
-                    if not meta['lore']:
-                        try:
-                            tag = nbt.get_compound('tag')
-                            if tag:
-                                display = tag.get_compound('display')
-                                if display:
-                                    lore_tag = display.get_list('Lore')
-                                    if lore_tag:
-                                        for li in range(len(lore_tag)):
-                                            try:
-                                                meta['lore'].append(str(lore_tag.get_string(li)))
-                                            except Exception:
-                                                pass
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-        
-        return meta
-    
-    def _try_read_inventory_slot(self, player, slot, container_enum):
-        """Try to read an item from the player's inventory at the given slot.
-        Returns dict {'type': str, 'shulker_contents': list|None, 
-                      'custom_name': str|None, 'enchantments': list, 'lore': list} or None on failure."""
-        try:
-            inv = player.inventory
-            # Map container_enum + slot to actual inventory index
-            actual_slot = slot
-            if container_enum == 29:  # InventoryContainer
-                actual_slot = slot + 9
-            elif container_enum == 59:  # CursorContainer
-                # Try to read cursor item if available
-                try:
-                    cursor_item = inv.get_item(slot)
-                    if cursor_item is not None:
-                        item_type = str(cursor_item.type)
-                        if item_type and item_type != 'minecraft:air':
-                            result = {'type': item_type, 'shulker_contents': None}
-                            result.update(self._extract_item_meta(cursor_item))
-                            self._read_shulker_contents(cursor_item, result)
-                            return result
-                except Exception:
-                    pass
-                return None
-            elif container_enum == 34:  # OffhandContainer
-                try:
-                    offhand = inv.get_item(40)  # offhand slot
-                    if offhand is not None:
-                        item_type = str(offhand.type)
-                        if item_type and item_type != 'minecraft:air':
-                            result = {'type': item_type, 'shulker_contents': None}
-                            result.update(self._extract_item_meta(offhand))
-                            return result
-                except Exception:
-                    pass
-                return None
-            
-            item = inv.get_item(actual_slot)
-            if item is not None:
-                item_type = str(item.type)
-                if not item_type or item_type == 'minecraft:air':
-                    return None
-                result = {'type': item_type, 'shulker_contents': None}
-                result.update(self._extract_item_meta(item))
-                self._read_shulker_contents(item, result)
-                return result
-        except Exception as e:
-            self.logger.warning(f"[AntiGrief] Inventory slot read failed: {e}")
-        return None
-    
-    def _snapshot_player_inventory(self, player):
-        """Read all items in the player's inventory.
-        Returns dict {slot: {'type': str, 'count': int, 'custom_name': str|None, 
-                             'enchantments': list, 'lore': list, 'shulker_contents': list|None}}."""
-        snapshot = {}
-        try:
-            inv = player.inventory
-            for i in range(36):
-                try:
-                    item = inv.get_item(i)
-                    if item is not None:
-                        t = str(item.type)
-                        if t and t != 'minecraft:air':
-                            entry = {
-                                'type': t,
-                                'count': item.amount if hasattr(item, 'amount') else 1,
-                                'shulker_contents': None
-                            }
-                            entry.update(self._extract_item_meta(item))
-                            # Read shulker contents for shulker box items
-                            self._read_shulker_contents(item, entry)
-                            snapshot[i] = entry
-                except Exception:
-                    continue
-        except Exception as e:
-            self.logger.warning(f"[AntiGrief] Inventory snapshot failed: {e}")
-        return snapshot
-    
-    def _diff_inventory_snapshots(self, player, old_snapshot, new_snapshot):
-        """Compare two inventory snapshots. Returns list of dicts for items gained by the player.
-        Each dict: {'type': str, 'count': int, 'shulker_contents': list|None,
-                    'custom_name': str|None, 'enchantments': list, 'lore': list}."""
-        gained = []
-        try:
-            inv = player.inventory
-            for slot, new_info in new_snapshot.items():
-                old_info = old_snapshot.get(slot)
-                if old_info is None:
-                    # Completely new slot — item was gained
-                    item_result = {
-                        'type': new_info['type'], 'count': new_info['count'],
-                        'shulker_contents': None,
-                        'custom_name': new_info.get('custom_name'),
-                        'enchantments': new_info.get('enchantments', []),
-                        'lore': new_info.get('lore', [])
-                    }
-                    # Try to read shulker contents from the actual item
-                    try:
-                        item = inv.get_item(slot)
-                        if item is not None:
-                            self._read_shulker_contents(item, item_result)
-                            # Refresh metadata from live item
-                            fresh_meta = self._extract_item_meta(item)
-                            item_result.update(fresh_meta)
-                    except Exception:
-                        pass
-                    gained.append(item_result)
-                elif old_info['type'] != new_info['type']:
-                    # Different item type — gained new item
-                    item_result = {
-                        'type': new_info['type'], 'count': new_info['count'],
-                        'shulker_contents': None,
-                        'custom_name': new_info.get('custom_name'),
-                        'enchantments': new_info.get('enchantments', []),
-                        'lore': new_info.get('lore', [])
-                    }
-                    try:
-                        item = inv.get_item(slot)
-                        if item is not None:
-                            self._read_shulker_contents(item, item_result)
-                            fresh_meta = self._extract_item_meta(item)
-                            item_result.update(fresh_meta)
-                    except Exception:
-                        pass
-                    gained.append(item_result)
-                elif new_info['count'] > old_info['count']:
-                    # Same type but more items — gained some
-                    delta = new_info['count'] - old_info['count']
-                    item_result = {
-                        'type': new_info['type'], 'count': delta,
-                        'shulker_contents': None,
-                        'custom_name': new_info.get('custom_name'),
-                        'enchantments': new_info.get('enchantments', []),
-                        'lore': new_info.get('lore', [])
-                    }
-                    try:
-                        item = inv.get_item(slot)
-                        if item is not None:
-                            self._read_shulker_contents(item, item_result)
-                            fresh_meta = self._extract_item_meta(item)
-                            item_result.update(fresh_meta)
-                    except Exception:
-                        pass
-                    gained.append(item_result)
-        except Exception as e:
-            self.logger.warning(f"[AntiGrief] Inventory diff failed: {e}")
-        return gained
-    
-    def _read_shulker_contents(self, item, result):
-        """Try to read shulker box contents using structured NBT API (no str(nbt) to avoid segfault)."""
-        item_type = result.get('type', '')
-        if 'shulker_box' not in item_type:
-            return
-        
-        try:
-            nbt = item.nbt
-            if nbt is None:
-                return
-            
-            # Use structured NBT API — NEVER call str(nbt) as it segfaults on nested tags
-            items_tag = None
-            try:
-                items_tag = nbt.get_list('Items')
-            except Exception:
-                pass
-            
-            if items_tag is None:
-                return
-            
-            contents = []
-            for i in range(len(items_tag)):
-                try:
-                    entry = items_tag.get_compound(i)
-                    if entry is None:
-                        continue
-                    
-                    # Get item name
-                    item_name = None
-                    try:
-                        item_name = entry.get_string('Name')
-                    except Exception:
-                        pass
-                    if not item_name:
-                        continue
-                    
-                    # Get count and slot
-                    item_count = 1
-                    item_slot = -1
-                    try:
-                        item_count = entry.get_byte('Count')
-                    except Exception:
-                        pass
-                    try:
-                        item_slot = entry.get_byte('Slot')
-                    except Exception:
-                        pass
-                    
-                    item_entry = {
-                        'name': item_name,
-                        'count': int(item_count) if item_count else 1,
-                        'slot': int(item_slot) if item_slot is not None else -1,
-                        'custom_name': None,
-                        'enchantments': [],
-                        'lore': []
-                    }
-                    
-                    # Extract metadata from tag compound
-                    try:
-                        tag = entry.get_compound('tag')
-                        if tag is not None:
-                            # Custom display name
-                            try:
-                                display = tag.get_compound('display')
-                                if display is not None:
-                                    try:
-                                        dn = display.get_string('Name')
-                                        if dn:
-                                            item_entry['custom_name'] = str(dn)
-                                    except Exception:
-                                        pass
-                                    # Lore
-                                    try:
-                                        lore_tag = display.get_list('Lore')
-                                        if lore_tag is not None:
-                                            for li in range(len(lore_tag)):
-                                                try:
-                                                    item_entry['lore'].append(str(lore_tag.get_string(li)))
-                                                except Exception:
-                                                    pass
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
-                            # Enchantments
-                            try:
-                                ench_tag = None
-                                try:
-                                    ench_tag = tag.get_list('ench')
-                                except Exception:
-                                    pass
-                                if ench_tag is None:
-                                    try:
-                                        ench_tag = tag.get_list('Enchantments')
-                                    except Exception:
-                                        pass
-                                if ench_tag is not None:
-                                    for ei in range(len(ench_tag)):
-                                        try:
-                                            ec = ench_tag.get_compound(ei)
-                                            if ec is not None:
-                                                eid = ''
-                                                elvl = 0
-                                                try:
-                                                    eid = ec.get_string('id')
-                                                except Exception:
-                                                    pass
-                                                try:
-                                                    elvl = ec.get_short('lvl')
-                                                except Exception:
-                                                    pass
-                                                if eid:
-                                                    item_entry['enchantments'].append({
-                                                        'name': str(eid).replace('minecraft:', ''),
-                                                        'level': int(elvl)
-                                                    })
-                                        except Exception:
-                                            pass
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    
-                    contents.append(item_entry)
-                except Exception:
-                    continue
-            
-            if contents:
-                result['shulker_contents'] = contents
-        except Exception as e:
-            self.logger.warning(f"[AntiGrief] Shulker NBT read failed: {e}")
-    
-    def _resolve_and_log_container_action(self, player_name, actions_batch,
-                                           container_info, inv_snapshot=None):
-        """Process a batch of Take/Place actions from one ItemStackRequest.
-        Only handles Container Add events (player puts item into container).
-        inv_snapshot: open-time inventory snapshot — the PRIMARY source for item identification.
-        Container Take events (player gains item) are handled by the open/close inventory diff."""
-        
-        # --- Helper: reliable item lookup ---
-        def lookup_item(src_enum, src_slot):
-            """Look up item info from snapshot FIRST, then live inventory as fallback.
-            Returns dict with 'type', 'custom_name', 'enchantments', 'lore', 'shulker_contents' or None."""
-            # Map container_enum + slot to snapshot key (inventory index 0-35)
-            snapshot_key = None
-            if src_enum == 12:       # HotbarContainer: slot 0-8 → inv 0-8
-                snapshot_key = src_slot
-            elif src_enum == 28:     # InventoryContainer: slot → direct
-                snapshot_key = src_slot
-            elif src_enum == 29:     # InventoryContainer: slot 0-26 → inv 9-35
-                snapshot_key = src_slot + 9
-            elif src_enum == 34:     # OffhandContainer
-                snapshot_key = 40
-            # Try snapshot first (always reliable — taken before any moves)
-            if inv_snapshot and snapshot_key is not None:
-                snap = inv_snapshot.get(snapshot_key)
-                if snap:
-                    # Snapshot now contains full data: type, count, enchantments, lore, shulker_contents
-                    return snap
-                # Also try the raw src_slot in case enum mapping is off
-                snap = inv_snapshot.get(src_slot)
-                if snap:
-                    return snap
-            # Last resort: try live inventory read 
-            try:
-                player = None
-                for p in self.server.online_players:
-                    if p.name == player_name:
-                        player = p
-                        break
-                if player:
-                    return self._try_read_inventory_slot(player, src_slot, src_enum)
-            except Exception:
-                pass
-            return None
-        
-        # Classify actions into adds only
-        direct_adds = []           # Place from player inventory → container (shift-click)
-        player_to_cursor = []      # Take from player inventory → cursor
-        cursor_to_container = []   # Place from cursor → container
-        
-        for amount, src_enum, src_slot, dst_enum, dst_slot in actions_batch:
-            src_is_player = src_enum in self.PLAYER_CONTAINER_ENUMS
-            dst_is_player = dst_enum in self.PLAYER_CONTAINER_ENUMS
-            src_is_cursor = (src_enum == 59)
-            dst_is_cursor = (dst_enum == 59)
-            
-            if src_is_player and not src_is_cursor and not dst_is_player:
-                direct_adds.append((amount, src_enum, src_slot, dst_enum, dst_slot))
-            elif src_is_player and not src_is_cursor and dst_is_cursor:
-                player_to_cursor.append((amount, src_enum, src_slot, dst_enum, dst_slot))
-            elif src_is_cursor and not dst_is_player:
-                cursor_to_container.append((amount, src_enum, src_slot, dst_enum, dst_slot))
-        
-        # --- Handle DIRECT shift-click adds (inventory → container) ---
-        for amount, src_enum, src_slot, dst_enum, dst_slot in direct_adds:
-            item_type = lookup_item(src_enum, src_slot)
-            self._log_container_event(player_name, 'Container Add', amount, item_type, src_slot, dst_slot, container_info)
-        
-        # --- Handle CLICK-MOVE adds: inventory → cursor → container ---
-        if player_to_cursor and cursor_to_container:
-            for amount, src_enum, src_slot, dst_enum, dst_slot in player_to_cursor:
-                item_type = lookup_item(src_enum, src_slot)
-                orig_dst_slot = cursor_to_container[0][4] if cursor_to_container else dst_slot
-                self._log_container_event(player_name, 'Container Add', amount, item_type, src_slot, orig_dst_slot, container_info)
-        elif player_to_cursor:
-            # Inventory → cursor only — store as pending add
-            if not hasattr(self, '_pending_cursor'):
-                self._pending_cursor = {}
-            for amount, src_enum, src_slot, dst_enum, dst_slot in player_to_cursor:
-                item_type = lookup_item(src_enum, src_slot)
-                self._pending_cursor[player_name] = {
-                    'direction': 'add', 'amount': amount,
-                    'src_slot': src_slot, 'item_type': item_type,
-                    'container_info': container_info,
-                    'time': tm.time()
-                }
-        
-        # --- Handle ORPHANED cursor → container (from a previous request) ---
-        if cursor_to_container and not player_to_cursor:
-            if not hasattr(self, '_pending_cursor'):
-                self._pending_cursor = {}
-            pending = self._pending_cursor.pop(player_name, None)
-            if pending and pending.get('direction') == 'add':
-                for amount, src_enum, src_slot, dst_enum, dst_slot in cursor_to_container:
-                    self._log_container_event(player_name, 'Container Add', amount,
-                                              pending.get('item_type'), pending['src_slot'], dst_slot,
-                                              pending.get('container_info', container_info))
-    
-    def _log_container_event(self, player_name, action, amount, item_info,
-                              src_slot, dst_slot, container_info):
-        """Write a container action to data_buffers.
-        item_info can be a dict {'type': str, 'shulker_contents': list|None,
-        'custom_name': str|None, 'enchantments': list, 'lore': list}, a string, or None."""
-        # Extract item type, shulker contents, and metadata from item_info
-        if isinstance(item_info, dict):
-            item_type = item_info.get('type')
-            shulker_contents = item_info.get('shulker_contents')
-            custom_name = item_info.get('custom_name')
-            enchantments = item_info.get('enchantments', [])
-            lore = item_info.get('lore', [])
-        elif isinstance(item_info, str):
-            item_type = item_info
-            shulker_contents = None
-            custom_name = None
-            enchantments = []
-            lore = []
-        else:
-            item_type = None
-            shulker_contents = None
-            custom_name = None
-            enchantments = []
-            lore = []
-        
-        type_str = item_type if item_type else f"slot {src_slot}"
-        display = f"{type_str} x{amount}"
-        
-        # Show custom name if renamed
-        if custom_name:
-            display = f'"{custom_name}" ({type_str}) x{amount}'
-        
-        # If shulker, show compact indicator (full contents in blockdata for web UI)
-        if shulker_contents:
-            display += f" \U0001f4e6 {len(shulker_contents)} items inside"
-        
-        blockdata = {
-            'container_type': container_info.get('block_type', 'unknown'),
-            'amount': amount,
-            'item': item_type,
-            'src_slot': src_slot,
-            'dst_slot': dst_slot
-        }
-        if custom_name:
-            blockdata['custom_name'] = custom_name
-        if enchantments:
-            blockdata['enchantments'] = enchantments
-        if lore:
-            blockdata['lore'] = lore
-        if shulker_contents:
-            blockdata['shulker_contents'] = shulker_contents
-        
-        data_buffers['container_access'].append({
-            'name': player_name,
-            'action': action,
-            'coordinates': container_info.get('coordinates', {'x': 0, 'y': 0, 'z': 0}),
-            'type': display,
-            'world': container_info.get('world', 'unknown'),
-            'time': now_est().isoformat(),
-            'blockdata': json.dumps(blockdata)
-        })
-
 
     # ========================================================================
     # EVENT HANDLERS
@@ -2171,138 +1696,45 @@ class AntiGriefPlugin(Plugin):
     
     @event_handler
     def on_block_break(self, event: BlockBreakEvent):
-        """Log block break events with container inventory preservation"""
+        """Capture the live block/container before destruction and log the break."""
         if not RECORD_HUMAN and not RECORD_NATURE:
             return
-        
-        player = event.player
-        block = event.block
-        
-        # Get block type as proper string identifier
-        block_type_str = str(block.type)
+        try:
+            player = event.player
+            block = event.block
+            player_name = str(player.name)
+            dimension = str(player.location.dimension.name)
+            bx, by, bz = int(block.x), int(block.y), int(block.z)
+            block_type_str = str(block.type)
+        except (RuntimeError, SystemError, OSError):
+            return
+
         if "." in block_type_str and ":" not in block_type_str:
             block_type_str = block_type_str.split(".")[-1].lower()
-        
-        # Serialize full block data including container inventory BEFORE it's destroyed
-        blockdata_json = ""
+
         try:
-            blockdata_json = serialize_block_data(block)
-        except Exception as e:
-            self.logger.warning(f"Failed to serialize block data at {block.x},{block.y},{block.z}: {e}")
-        
-        # If this is a container block and serialize_block_data didn't capture inventory
-        # (which happens in Endstone 0.11 where capture_state() has no inventory),
-        # reconstruct contents from Container Add/Take records in the DB.
-        container_keywords = ('shulker_box', 'chest', 'barrel', 'hopper', 
-                              'dispenser', 'dropper', 'furnace', 'smoker', 'brewing_stand')
-        is_container = any(kw in block_type_str for kw in container_keywords) or \
-                       (block_type_str.startswith('minecraft:') and block_type_str in CONTAINER_BLOCKS)
-        
-        if is_container:
-            try:
-                parsed_bd = json.loads(blockdata_json) if blockdata_json else {}
-            except (json.JSONDecodeError, ValueError):
-                parsed_bd = {}
-            
-            if 'container_items' not in parsed_bd:
-                # Flush pending data first so recent interactions are in the DB
-                try:
-                    flush_data_to_db()
-                except Exception:
-                    pass
-                
-                try:
-                    reconstructed = self._reconstruct_container_inventory(
-                        block.x, block.y, block.z, player.location.dimension.name
-                    )
-                    if reconstructed:
-                        parsed_bd['container_items'] = reconstructed
-                        blockdata_json = json.dumps(parsed_bd)
-                        self.logger.info(f"[AntiGrief] Reconstructed {len(reconstructed)} items for container at {block.x},{block.y},{block.z}")
-                except Exception as e:
-                    self.logger.warning(f"[AntiGrief] Container inventory reconstruction failed: {e}")
-        
+            saved_data = self._build_block_backup(
+                block, dimension, player_name, 'block_break'
+            )
+            blockdata_json = json.dumps(
+                saved_data, ensure_ascii=False, separators=(',', ':')
+            ) if saved_data else ""
+        except Exception as error:
+            blockdata_json = ""
+            self.logger.warning(
+                f"Failed to capture block data at {bx},{by},{bz}: {error}"
+            )
+
         data_buffers['break'].append({
-            'name': player.name,
+            'name': player_name,
             'action': lang["action_break"],
-            'coordinates': {'x': block.x, 'y': block.y, 'z': block.z},
+            'coordinates': {'x': bx, 'y': by, 'z': bz},
             'type': block_type_str,
-            'world': player.location.dimension.name,
+            'world': dimension,
             'time': now_est().isoformat(),
-            'blockdata': blockdata_json
+            'blockdata': blockdata_json,
         })
 
-        # Log shulker box contents as container events for web UI visibility
-        if 'shulker_box' in block_type_str:
-            try:
-                # Read inventory directly from the live block
-                state = block.capture_state()
-                if hasattr(state, 'inventory') and state.inventory is not None:
-                    inv = state.inventory
-                    for slot in range(inv.size):
-                        try:
-                            item = inv.get_item(slot)
-                            if item is not None and str(item.type) != 'minecraft:air':
-                                item_type = str(item.type)
-                                amount = item.amount if hasattr(item, 'amount') else 1
-                                display = f"{item_type} x{amount}"
-                                
-                                bd = {
-                                    'container_type': block_type_str,
-                                    'amount': amount,
-                                    'item': item_type,
-                                    'src_slot': slot,
-                                    'dst_slot': -1
-                                }
-                                # Extract metadata via ItemMeta API
-                                try:
-                                    meta = self._extract_item_meta(item)
-                                    if meta.get('custom_name'):
-                                        bd['custom_name'] = meta['custom_name']
-                                        display = f'"{ meta["custom_name"] }" ({item_type}) x{amount}'
-                                    if meta.get('enchantments'):
-                                        bd['enchantments'] = meta['enchantments']
-                                    if meta.get('lore'):
-                                        bd['lore'] = meta['lore']
-                                except Exception:
-                                    pass
-                                
-                                data_buffers['container_access'].append({
-                                    'name': player.name,
-                                    'action': 'Shulker Break',
-                                    'coordinates': {'x': block.x, 'y': block.y, 'z': block.z},
-                                    'type': display,
-                                    'world': player.location.dimension.name,
-                                    'time': now_est().isoformat(),
-                                    'blockdata': json.dumps(bd)
-                                })
-                        except Exception as e:
-                            self.logger.warning(f"[AntiGrief] Shulker break slot {slot} read failed: {e}")
-                else:
-                    # Introspect the block state to find alternative inventory access
-                    state_attrs = [a for a in dir(state) if not a.startswith('_')]
-                    self.logger.info(f"[AntiGrief] Shulker state at {block.x},{block.y},{block.z} attrs: {state_attrs}")
-                    # Check alternative properties
-                    for attr in ['block_entity', 'nbt', 'container', 'items', 'contents', 'data', 'block_data']:
-                        if hasattr(state, attr):
-                            try:
-                                val = getattr(state, attr)
-                                self.logger.info(f"[AntiGrief] Shulker state.{attr} = {type(val).__name__}: {repr(val)[:200]}")
-                            except Exception as e:
-                                self.logger.info(f"[AntiGrief] Shulker state.{attr} access error: {e}")
-                    # Also check the block object itself
-                    block_attrs = [a for a in dir(block) if not a.startswith('_')]
-                    self.logger.info(f"[AntiGrief] Shulker block attrs: {block_attrs}")
-                    for attr in ['block_entity', 'nbt', 'container', 'inventory', 'items']:
-                        if hasattr(block, attr):
-                            try:
-                                val = getattr(block, attr)
-                                self.logger.info(f"[AntiGrief] Shulker block.{attr} = {type(val).__name__}: {repr(val)[:200]}")
-                            except Exception as e:
-                                self.logger.info(f"[AntiGrief] Shulker block.{attr} access error: {e}")
-            except Exception as e:
-                self.logger.warning(f"[AntiGrief] Shulker break content logging failed: {e}")
-    
     @event_handler
     def on_block_place(self, event: BlockPlaceEvent):
         """Log block place events"""
@@ -2347,65 +1779,209 @@ class AntiGriefPlugin(Plugin):
             'time': now_est().isoformat()
         })
         
-        # Log shulker box contents on place for web UI visibility
-        if 'shulker_box' in block_type_str:
-            try:
-                # Read inventory from the placed block entity
-                placed_block = player.location.dimension.get_block_at(block.x, block.y, block.z)
-                state = placed_block.capture_state()
-                if hasattr(state, 'inventory') and state.inventory is not None:
-                    inv = state.inventory
-                    for slot in range(inv.size):
-                        try:
-                            item = inv.get_item(slot)
-                            if item is not None and str(item.type) != 'minecraft:air':
-                                item_type = str(item.type)
-                                amount = item.amount if hasattr(item, 'amount') else 1
-                                display = f"{item_type} x{amount}"
-                                
-                                bd = {
-                                    'container_type': block_type_str,
-                                    'amount': amount,
-                                    'item': item_type,
-                                    'src_slot': slot,
-                                    'dst_slot': -1
-                                }
-                                try:
-                                    meta = self._extract_item_meta(item)
-                                    if meta.get('custom_name'):
-                                        bd['custom_name'] = meta['custom_name']
-                                        display = f'"{ meta["custom_name"] }" ({item_type}) x{amount}'
-                                    if meta.get('enchantments'):
-                                        bd['enchantments'] = meta['enchantments']
-                                    if meta.get('lore'):
-                                        bd['lore'] = meta['lore']
-                                except Exception:
-                                    pass
-                                
-                                data_buffers['container_access'].append({
-                                    'name': player.name,
-                                    'action': 'Shulker Place',
-                                    'coordinates': {'x': block.x, 'y': block.y, 'z': block.z},
-                                    'type': display,
-                                    'world': player.location.dimension.name,
-                                    'time': now_est().isoformat(),
-                                    'blockdata': json.dumps(bd)
-                                })
-                        except Exception:
-                            continue
-            except Exception:
-                pass
     
+    def _snapshot_player_inventory(self, player_name):
+        """Take a snapshot of a player's inventory as {item_type_str: count}.
+        Accepts a player NAME (string) and re-resolves to avoid stale proxies."""
+        try:
+            player = self.server.get_player(player_name)
+            if player is None:
+                return None
+            snapshot = {}
+            for item in player.inventory.contents:
+                if item is not None:
+                    item_type = str(item.type)
+                    snapshot[item_type] = snapshot.get(item_type, 0) + item.amount
+            return snapshot
+        except (RuntimeError, SystemError, OSError) as e:
+            self.logger.warning(f"[Container] Inventory snapshot stale proxy for {player_name}: {e}")
+            return None
+        except Exception as e:
+            self.logger.warning(f"[Container] Player inventory snapshot failed for {player_name}: {e}")
+            return None
+
+    def _diff_player_inventory(self, player_name):
+        """Compare exact native container snapshots when the UI closes."""
+        if player_name not in container_snapshots:
+            return
+
+        tracked = container_snapshots.pop(player_name)
+        sx, sy, sz = tracked['x'], tracked['y'], tracked['z']
+        stype = tracked['block_type']
+        dimension = tracked['dimension']
+        before_native = tracked.get('blockdata_snapshot')
+
+        if before_native is not None and self._blockdata_ready:
+            after_native, after_snapshot_id = self._capture_native_snapshot(
+                dimension, sx, sy, sz, player_name, 'container_close', store=True
+            )
+            if after_native is None:
+                return
+
+            changes = self.blockdata.diff_inventory(before_native, after_native)
+            before_entity = self.blockdata.block_entity(before_native) or {}
+            after_entity = self.blockdata.block_entity(after_native) or {}
+            before_snapshot_id = tracked.get('snapshot_id')
+            event_time = now_est().isoformat()
+
+            def actor_metadata(entity):
+                value = dict(entity.get('nbt') or {})
+                for key in ('Items', 'items', 'x', 'y', 'z'):
+                    value.pop(key, None)
+                return value
+
+            for change in changes:
+                item = change.get('after') or change.get('before') or {}
+                item_type = self.blockdata.item_id(item)
+                payload = {
+                    'schema_version': BlockDataAdapter.SCHEMA_VERSION,
+                    'provider': BlockDataAdapter.PROVIDER,
+                    'container_type': stype,
+                    'slot': change.get('slot'),
+                    'item': item_type,
+                    'amount': change.get('amount', 0),
+                    'before_item': change.get('before'),
+                    'after_item': change.get('after'),
+                    'before_snapshot_id': before_snapshot_id,
+                    'after_snapshot_id': after_snapshot_id,
+                    'before_revision': before_native.get('revision'),
+                    'after_revision': after_native.get('revision'),
+                    'canonical_nbt': bool(
+                        before_entity.get('canonical_nbt') or after_entity.get('canonical_nbt')
+                    ),
+                }
+                data_buffers['container_access'].append({
+                    'name': player_name,
+                    'action': change['action'],
+                    'coordinates': {'x': sx, 'y': sy, 'z': sz},
+                    'type': item_type,
+                    'world': dimension,
+                    'time': event_time,
+                    'blockdata': json.dumps(
+                        payload, ensure_ascii=False, separators=(',', ':')
+                    ),
+                })
+
+            before_metadata = actor_metadata(before_entity)
+            after_metadata = actor_metadata(after_entity)
+            metadata_changed = before_metadata != after_metadata
+            if metadata_changed:
+                data_buffers['container_access'].append({
+                    'name': player_name,
+                    'action': 'Container NBT Change',
+                    'coordinates': {'x': sx, 'y': sy, 'z': sz},
+                    'type': stype,
+                    'world': dimension,
+                    'time': event_time,
+                    'blockdata': json.dumps({
+                        'schema_version': BlockDataAdapter.SCHEMA_VERSION,
+                        'provider': BlockDataAdapter.PROVIDER,
+                        'container_type': stype,
+                        'before_snapshot_id': before_snapshot_id,
+                        'after_snapshot_id': after_snapshot_id,
+                        'before_revision': before_native.get('revision'),
+                        'after_revision': after_native.get('revision'),
+                        'before_nbt': before_metadata,
+                        'after_nbt': after_metadata,
+                        'canonical_nbt': bool(
+                            before_entity.get('canonical_nbt')
+                            or after_entity.get('canonical_nbt')
+                        ),
+                    }, ensure_ascii=False, separators=(',', ':')),
+                })
+
+            if changes or metadata_changed:
+                self.logger.info(
+                    f"[Container] {player_name}: {len(changes)} exact slot changes, "
+                    f"metadata_changed={metadata_changed} at {sx},{sy},{sz} ({stype})"
+                )
+            return
+
+        # Legacy fallback when no native baseline was available.
+        old_snapshot = tracked.get('snapshot')
+        if old_snapshot is None:
+            return
+        new_snapshot = self._snapshot_player_inventory(player_name)
+        if new_snapshot is None:
+            return
+        all_items = set(old_snapshot) | set(new_snapshot)
+        changes = 0
+        for item_type in all_items:
+            diff = new_snapshot.get(item_type, 0) - old_snapshot.get(item_type, 0)
+            if diff == 0:
+                continue
+            action = "Container Take" if diff > 0 else "Container Add"
+            amount = abs(diff)
+            data_buffers['container_access'].append({
+                'name': player_name,
+                'action': action,
+                'coordinates': {'x': sx, 'y': sy, 'z': sz},
+                'type': item_type,
+                'world': dimension,
+                'time': now_est().isoformat(),
+                'blockdata': json.dumps({
+                    'schema_version': 1,
+                    'provider': 'legacy-player-inventory-diff',
+                    'container_type': stype,
+                    'item': item_type,
+                    'amount': amount,
+                }, separators=(',', ':')),
+            })
+            changes += 1
+        if changes:
+            self.logger.info(
+                f"[Container] {player_name}: {changes} legacy item changes "
+                f"at {sx},{sy},{sz} ({stype})"
+            )
+
+    @event_handler
+    def on_packet_receive(self, event: PacketReceiveEvent):
+        """Intercept ContainerClose packets to detect when a player closes a container UI."""
+        # ContainerClose packet id = 47
+        if event.packet_id != 47:
+            return
+
+        # Extract the player name (primitive) immediately to avoid stale proxy later
+        try:
+            player = event.player
+            if player is None:
+                return
+            player_name = str(player.name)
+        except (RuntimeError, SystemError, OSError):
+            return  # Stale proxy — player already disconnected
+
+        def capture_after_close():
+            try:
+                self._diff_player_inventory(player_name)
+            except Exception as error:
+                self.logger.warning(
+                    f"[Container] Close diff error for {player_name}: {error}"
+                )
+                container_snapshots.pop(player_name, None)
+
+        # PacketReceiveEvent can arrive before the inventory transaction is fully
+        # committed. Capture one server tick later to get the authoritative state.
+        try:
+            self.server.scheduler.run_task(self, capture_after_close, delay=1)
+        except Exception:
+            capture_after_close()
+
     @event_handler
     def on_player_interact(self, event: PlayerInteractEvent):
         """Log player interaction events and track container access"""
-        player = event.player
-        block = event.block
+        # Extract all primitives from C++ proxies immediately to avoid stale access
+        try:
+            player = event.player
+            block = event.block
+            if not block:
+                return
+            player_name = str(player.name)
+            block_type_str = str(block.type)
+            bx, by, bz = block.x, block.y, block.z
+            dim_name = player.location.dimension.name
+        except (RuntimeError, SystemError, OSError):
+            return  # Stale proxy — skip silently
         
-        if not block:
-            return
-        
-        block_type_str = str(block.type)
         if block_type_str == "minecraft:air":
             return
         
@@ -2413,9 +1989,6 @@ class AntiGriefPlugin(Plugin):
         # When a player places a block, both InteractEvent and PlaceEvent fire.
         # We suppress the interact if this block+player was just logged as a placement.
         if hasattr(self, '_recent_placements'):
-            # Check the block clicked ON (interact coords) and adjacent blocks
-            # The interact is on the block clicked, placement is on the adjacent position
-            pname = player.name
             now = tm.time()
             # Clean old entries (> 2 seconds)
             expired = [k for k, v in self._recent_placements.items() if now - v > 2]
@@ -2423,237 +1996,161 @@ class AntiGriefPlugin(Plugin):
                 del self._recent_placements[k]
             # Check if this player just placed a block within 0.5 seconds
             for key, place_time in self._recent_placements.items():
-                if key.startswith(f"{pname}:") and now - place_time < 0.5:
+                if key.startswith(f"{player_name}:") and now - place_time < 0.5:
                     return  # Suppress this interact — it's from a block placement
         
+        # Capture the actual container actor, every occupied slot, and canonical NBT.
+        if (block_type_str in CONTAINER_BLOCKS or block_type_str.endswith("_shulker_box")) and CAPTURE_CONTAINER_OPEN_CLOSE:
+            native_snapshot, snapshot_id = self._capture_native_snapshot(
+                dim_name, bx, by, bz, player_name, 'container_open', store=True
+            )
+            if native_snapshot is not None and self.blockdata.is_container(native_snapshot):
+                container_snapshots[player_name] = {
+                    'x': bx, 'y': by, 'z': bz,
+                    'block_type': block_type_str,
+                    'dimension': dim_name,
+                    'blockdata_snapshot': native_snapshot,
+                    'snapshot_id': snapshot_id,
+                    'time': tm.time(),
+                }
+                self.logger.info(
+                    f"[Container] Native tracking open: {player_name} @ "
+                    f"{bx},{by},{bz} ({block_type_str})"
+                )
+            else:
+                legacy_snapshot = self._snapshot_player_inventory(player_name)
+                if legacy_snapshot is not None:
+                    container_snapshots[player_name] = {
+                        'x': bx, 'y': by, 'z': bz,
+                        'block_type': block_type_str,
+                        'dimension': dim_name,
+                        'snapshot': legacy_snapshot,
+                        'time': tm.time(),
+                    }
+
         # Log the interaction
         data_buffers['chest'].append({
-            'name': player.name,
+            'name': player_name,
             'action': lang["action_interact"],
-            'coordinates': {'x': block.x, 'y': block.y, 'z': block.z},
-            'type': block.type,
-            'world': player.location.dimension.name,
+            'coordinates': {'x': bx, 'y': by, 'z': bz},
+            'type': block_type_str,
+            'world': dim_name,
             'time': now_est().isoformat()
         })
         
-        # Container access tracking
-        block_type = str(block.type)
-        is_container = block_type in CONTAINER_BLOCKS
-        # Fallback: substring match for block types that might not match exactly
-        if not is_container:
-            container_keywords = ('shulker_box', 'chest', 'barrel', 'hopper', 
-                                  'dispenser', 'dropper', 'furnace', 'smoker', 'brewing_stand')
-            for kw in container_keywords:
-                if kw in block_type:
-                    is_container = True
-                    break
-        if is_container:
-            # Track active container for this player (used by packet handler)
-            if not hasattr(self, '_active_containers'):
-                self._active_containers = {}
-            
-            # Snapshot inventory at open time for close-time diff
-            inv_snapshot = {}
-            snapshot_taken = False
-            try:
-                inv_snapshot = self._snapshot_player_inventory(player)
-                snapshot_taken = True
-            except Exception as e:
-                self.logger.warning(f"[AntiGrief] ContainerOpen: snapshot failed: {e}")
-            
-            # DIAGNOSTIC: Check if player has any container/open_inventory references
-            try:
-                player_attrs = [a for a in dir(player) if not a.startswith('_') and 'inv' in a.lower() or 'container' in a.lower() or 'open' in a.lower()]
-                print(f"[ContainerDiag] Player attrs with inv/container/open: {player_attrs}")
-                # Try all promising attributes
-                for attr_name in player_attrs:
-                    try:
-                        val = getattr(player, attr_name)
-                        if not callable(val):
-                            print(f"[ContainerDiag] player.{attr_name} = {val} (type: {type(val).__name__})")
-                    except Exception as ae:
-                        print(f"[ContainerDiag] player.{attr_name} -> ERROR: {ae}")
-            except Exception as de:
-                print(f"[ContainerDiag] Introspection failed: {de}")
-            
-            self._active_containers[player.name] = {
-                'coordinates': {'x': block.x, 'y': block.y, 'z': block.z},
-                'block_type': block_type,
-                'world': player.location.dimension.name,
-                'time': tm.time(),
-                'inv_snapshot': inv_snapshot,
-                'snapshot_taken': snapshot_taken
-            }
-            # Log the container open event
-            data_buffers['container_access'].append({
-                'name': player.name,
-                'action': 'Container Open',
-                'coordinates': {'x': block.x, 'y': block.y, 'z': block.z},
-                'type': block_type,
-                'world': player.location.dimension.name,
-                'time': now_est().isoformat()
-            })
     
-    @event_handler
-    def on_packet_receive(self, event: PacketReceiveEvent):
-        """Intercept packets for container item tracking."""
-        if not HAS_PACKET_LIB:
-            return
-        
-        if not hasattr(self, '_active_containers'):
-            self._active_containers = {}
-        
-        packet_id = event.packet_id
-        
-        # ContainerClose (47) — player closed a container
-        if packet_id == MinecraftPacketIds.ContainerClose:
-            try:
-                player = event.player
-                if player and player.name in self._active_containers:
-                    container_info = self._active_containers.pop(player.name)
-                    
-                    # Diff inventory to find what was taken FROM the container
-                    old_snapshot = container_info.get('inv_snapshot', {})
-                    snapshot_was_taken = container_info.get('snapshot_taken', False)
-                    
-                    if snapshot_was_taken and player:
-                        try:
-                            new_snapshot = self._snapshot_player_inventory(player)
-                            gained_items = self._diff_inventory_snapshots(player, old_snapshot, new_snapshot)
-                            for item_info in gained_items:
-                                self._log_container_event(
-                                    player.name, 'Container Take',
-                                    item_info['count'], item_info,
-                                    -1, -1, container_info
-                                )
-                        except Exception as e:
-                            self.logger.warning(f"[AntiGrief] Close-time inventory diff failed: {e}")
-                    else:
-                        self.logger.warning(f"[AntiGrief] ContainerClose: skipping diff - snapshot_taken={snapshot_was_taken}, player={'yes' if player else 'no'}")
-                    
-                    # Clean up pending cursor data
-                    if hasattr(self, '_pending_cursor') and player.name in self._pending_cursor:
-                        del self._pending_cursor[player.name]
-                    
-                    # Log container close event
-                    data_buffers['container_access'].append({
-                        'name': player.name,
-                        'action': 'Container Close',
-                        'coordinates': container_info.get('coordinates', {'x': 0, 'y': 0, 'z': 0}),
-                        'type': container_info.get('block_type', 'unknown'),
-                        'world': container_info.get('world', 'unknown'),
-                        'time': now_est().isoformat()
-                    })
-            except Exception as e:
-                self.logger.warning(f"[AntiGrief] ContainerClose handling failed: {e}")
-        
-        # ItemStackRequest (147) — item movement actions
-        elif packet_id == MinecraftPacketIds.ItemStackRequest:
-            try:
-                player = event.player
-                if not player or player.name not in self._active_containers:
-                    return
-                
-                container_info = self._active_containers[player.name]
-                
-                # Parse the packet
-                packet = MinecraftPackets.create_packet(MinecraftPacketIds.ItemStackRequest)
-                packet.deserialize(event.payload)
-                
-                # Process each request's actions as a BATCH
-                for req_data in packet.request.request_data:
-                    if not req_data.is_parsable_action:
-                        continue
-                    actions_batch = []
-                    for action in req_data.request_actions:
-                        if action.action_data is None:
-                            continue
-                        # Only process Take (0) and Place (1) actions
-                        action_type = action.action_type
-                        if action_type not in (0, 1):  # Take, Place
-                            continue
-                        
-                        data = action.action_data
-                        actions_batch.append((
-                            data.amount,
-                            data.source.container.container_enum,
-                            data.source.slot,
-                            data.distination.container.container_enum,  # typo in lib
-                            data.distination.slot
-                        ))
-                    
-                    if actions_batch:
-                        self._resolve_and_log_container_action(
-                            player.name, actions_batch, container_info,
-                            inv_snapshot=container_info.get('inv_snapshot')
-                        )
-            except Exception as e:
-                self.logger.warning(f"[AntiGrief] ItemStackRequest handling failed: {e}")
     
     @event_handler
     def on_actor_knockback(self, event: ActorKnockbackEvent):
         """Log entity damage events"""
-        if ONLY_IMPORTANT_ANIMAL:
-            important = ["minecraft:horse", "minecraft:pig", "minecraft:wolf", 
-                        "minecraft:cat", "minecraft:sniffer", "minecraft:parrot",
-                        "minecraft:donkey", "minecraft:mule", "minecraft:villager"]
-            if event.actor.type not in important:
-                return
-        
-        actor = event.actor
-        source = event.source if hasattr(event, 'source') else None
+        # Extract ALL primitives from C++ proxies in one guarded block
+        try:
+            actor_type = str(event.actor.type)
+            if ONLY_IMPORTANT_ANIMAL:
+                important = ["minecraft:horse", "minecraft:pig", "minecraft:wolf", 
+                            "minecraft:cat", "minecraft:sniffer", "minecraft:parrot",
+                            "minecraft:donkey", "minecraft:mule", "minecraft:villager"]
+                if actor_type not in important:
+                    return
+            
+            ax = int(event.actor.location.x)
+            ay = int(event.actor.location.y)
+            az = int(event.actor.location.z)
+            dim_name = event.actor.location.dimension.name
+            source = event.source if hasattr(event, 'source') else None
+            source_name = source.name if source and hasattr(source, 'name') else "Unknown"
+        except (RuntimeError, SystemError, OSError):
+            return  # Actor/source proxy is stale — silently skip
+        except Exception:
+            return  # Any other proxy access failure
         
         data_buffers['animal'].append({
-            'name': source.name if source and hasattr(source, 'name') else "Unknown",
+            'name': source_name,
             'action': lang["action_attack"],
-            'coordinates': {'x': int(actor.location.x), 'y': int(actor.location.y), 'z': int(actor.location.z)},
-            'type': actor.type,
-            'world': actor.location.dimension.name,
+            'coordinates': {'x': ax, 'y': ay, 'z': az},
+            'type': actor_type,
+            'world': dim_name,
             'time': now_est().isoformat()
         })
     
     @event_handler
     def on_explosion(self, event: ActorExplodeEvent):
-        """Log explosion events with container inventory preservation"""
-        actor = event.actor
-        actor_type = str(actor.type) if hasattr(actor, 'type') else "explosion"
-        
-        # Log each affected block individually so they can be rolled back
+        """Capture every affected block and container before explosion damage."""
+        try:
+            actor = event.actor
+            actor_type = str(actor.type) if hasattr(actor, 'type') else "explosion"
+            actor_dim = str(actor.location.dimension.name) if hasattr(actor, 'location') else "overworld"
+        except (RuntimeError, SystemError, OSError):
+            return
+        except Exception:
+            actor_type = "explosion"
+            actor_dim = "overworld"
+
         if hasattr(event, 'block_list') and event.block_list:
             for block in event.block_list:
-                # Get block type as proper string identifier
-                block_type_str = str(block.type)
-                if "." in block_type_str and ":" not in block_type_str:
-                    block_type_str = block_type_str.split(".")[-1].lower()
-                
-                # Serialize full block data including container inventory
-                blockdata_json = ""
                 try:
-                    blockdata_json = serialize_block_data(block)
-                except Exception:
-                    pass
-                
+                    block_type_str = str(block.type)
+                    if "." in block_type_str and ":" not in block_type_str:
+                        block_type_str = block_type_str.split(".")[-1].lower()
+                    bx, by, bz = int(block.x), int(block.y), int(block.z)
+                    saved_data = self._build_block_backup(
+                        block, actor_dim, actor_type, 'explosion'
+                    )
+                    blockdata_json = json.dumps(
+                        saved_data, ensure_ascii=False, separators=(',', ':')
+                    ) if saved_data else ""
+                except (RuntimeError, SystemError, OSError):
+                    continue
+                except Exception as error:
+                    self.logger.warning(f"[Explosion] Snapshot failed: {error}")
+                    continue
+
                 data_buffers['bomb'].append({
                     'name': actor_type,
                     'action': lang["action_explode"],
-                    'coordinates': {'x': block.x, 'y': block.y, 'z': block.z},
+                    'coordinates': {'x': bx, 'y': by, 'z': bz},
                     'type': block_type_str,
-                    'world': actor.location.dimension.name if hasattr(actor, 'location') else "Overworld",
+                    'world': actor_dim,
                     'time': now_est().isoformat(),
-                    'blockdata': blockdata_json
+                    'blockdata': blockdata_json,
                 })
-        else:
-            # Fallback - just log the explosion center
-            data_buffers['bomb'].append({
-                'name': actor_type,
-                'action': lang["action_explode"],
-                'coordinates': {'x': int(actor.location.x), 'y': int(actor.location.y), 'z': int(actor.location.z)},
-                'type': "explosion",
-                'world': actor.location.dimension.name,
-                'time': now_est().isoformat(),
-                'blockdata': ""
-            })
-    
+            return
+
+        try:
+            cx = int(actor.location.x)
+            cy = int(actor.location.y)
+            cz = int(actor.location.z)
+        except (RuntimeError, SystemError, OSError, AttributeError):
+            return
+        data_buffers['bomb'].append({
+            'name': actor_type,
+            'action': lang["action_explode"],
+            'coordinates': {'x': cx, 'y': cy, 'z': cz},
+            'type': "explosion",
+            'world': actor_dim,
+            'time': now_est().isoformat(),
+            'blockdata': "",
+        })
+
+    @event_handler
+    def on_script_message(self, event: ScriptMessageEvent):
+        """Handle incoming script messages from the Bedrock Script API behavior pack."""
+        msg_id = event.message_id
+        if msg_id == "antigrief:container_backup":
+            try:
+                payload = json.loads(event.message)
+                x = int(payload.get("x"))
+                y = int(payload.get("y"))
+                z = int(payload.get("z"))
+                dim = str(payload.get("dim"))
+                items = payload.get("items", [])
+                
+                # Cache the backup
+                self._container_backups[(x, y, z, dim)] = items
+                self.logger.info(f"[AntiGrief] Cached {len(items)} items for container at {x},{y},{z} in {dim}")
+            except Exception as e:
+                self.logger.warning(f"[AntiGrief] Failed to parse container backup payload: {e}")
+
     @event_handler
     def on_player_join(self, event: PlayerJoinEvent):
         """Handle player join - check bans"""

@@ -32,7 +32,7 @@ except ImportError:
 
 # Data paths
 DATA_DIR = "plugins/antigrief_data"
-DB_FILE = os.path.join(DATA_DIR, "tydata.db")
+DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 WEB_CONFIG_FILE = os.path.join(DATA_DIR, "web_config.json")
 
 # Global state
@@ -63,7 +63,7 @@ def create_app():
     app = FastAPI(
         title="AntiGrief WebUI",
         description="Player Behavior Logging Dashboard",
-        version="1.3.0"
+        version="1.5.0"
     )
     
     app.add_middleware(
@@ -83,7 +83,16 @@ def create_app():
         if secret != SECRET_KEY:
             raise HTTPException(status_code=401, detail="Invalid secret key")
         return True
-    
+
+    def _decode_json(value):
+        if not value:
+            return {}
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else {"value": decoded}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"raw": str(value)}
+
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():
         """Main dashboard page"""
@@ -131,7 +140,7 @@ def create_app():
             cur.execute(f"SELECT COUNT(*) FROM interactions {where_clause}", params)
             total_count = cur.fetchone()[0]
         
-        query = f"SELECT name, action, x, y, z, type, world, time, blockdata FROM interactions {where_clause} ORDER BY time DESC LIMIT ? OFFSET ?"
+        query = f"SELECT name, action, x, y, z, type, world, time, blockdata, id FROM interactions {where_clause} ORDER BY time DESC LIMIT ? OFFSET ?"
         params.append(effective_limit)
         params.append(max(0, offset))
         
@@ -150,15 +159,33 @@ def create_app():
                     "dimension": row[6],
                     "time": row[7],
                     "blockdata": row[8] if len(row) > 8 else None,
+                    "id": row[9] if len(row) > 9 else None,
+                    "snapshot_id": None,
+                    "has_nbt": False,
                     "container_detail": "",
                     "shulker_html": ""
                 }
+
+                parsed_blockdata = _decode_json(log_entry["blockdata"])
+                provider_data = parsed_blockdata.get("blockdata_api")
+                log_entry["snapshot_id"] = (
+                    parsed_blockdata.get("snapshot_id")
+                    or parsed_blockdata.get("after_snapshot_id")
+                    or parsed_blockdata.get("before_snapshot_id")
+                    or (provider_data.get("snapshot_id") if isinstance(provider_data, dict) else None)
+                )
+                log_entry["has_nbt"] = bool(
+                    log_entry["snapshot_id"]
+                    or parsed_blockdata.get("block_snapshot")
+                    or parsed_blockdata.get("before_item")
+                    or parsed_blockdata.get("after_item")
+                )
                 
                 # Pre-render container detail and shulker HTML server-side
                 action = row[1]
                 target_text = row[5] or ''
                 blockdata_str = row[8] if len(row) > 8 else None
-                if blockdata_str and action in ('Container Take', 'Container Add'):
+                if blockdata_str and action in ('Container Take', 'Container Add', 'Container Change', 'Container NBT Change'):
                     try:
                         bd = json.loads(blockdata_str)
                         ct = (bd.get('container_type') or '').replace('minecraft:', '')
@@ -251,7 +278,7 @@ def create_app():
                         pass
                 
                 # Fallback: parse old-format display text with [...] shulker list
-                if not log_entry["shulker_html"] and action in ('Container Take', 'Container Add'):
+                if not log_entry["shulker_html"] and action in ('Container Take', 'Container Add', 'Container Change'):
                     bracket_start = target_text.find(' [')
                     if bracket_start > 0 and target_text.endswith(']'):
                         item_part = target_text[:bracket_start]
@@ -284,6 +311,115 @@ def create_app():
         
         return {"logs": results, "total": len(results), "total_count": total_count, "offset": offset, "limit": effective_limit}
     
+    @app.get("/api/logs/{log_id}/blockdata")
+    async def get_log_blockdata(log_id: int, _: bool = Depends(verify_secret)):
+        """Return the complete structured payload for one interaction row."""
+        if not os.path.exists(DB_FILE):
+            raise HTTPException(status_code=404, detail="Database not found")
+        with sqlite3.connect(DB_FILE) as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT id, name, action, x, y, z, type, world, time, blockdata "
+                "FROM interactions WHERE id = ?",
+                (log_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Log entry not found")
+        payload = _decode_json(row[9])
+        return {
+            "log": {
+                "id": row[0], "player": row[1], "action": row[2],
+                "x": row[3], "y": row[4], "z": row[5], "target": row[6],
+                "dimension": row[7], "time": row[8],
+            },
+            "blockdata": payload,
+        }
+
+    @app.get("/api/container-snapshots")
+    async def get_container_snapshots(
+        hours: float = Query(24, description="Hours to look back"),
+        player: Optional[str] = Query(None),
+        reason: Optional[str] = Query(None),
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+        _: bool = Depends(verify_secret),
+    ):
+        """List canonical container snapshots without returning their large NBT blobs."""
+        if not os.path.exists(DB_FILE):
+            return {"snapshots": [], "total_count": 0}
+        threshold = (now_est() - timedelta(hours=hours)).isoformat()
+        clauses = ["captured_at >= ?"]
+        params = [threshold]
+        if player:
+            clauses.append("player_name LIKE ?")
+            params.append(f"%{player}%")
+        if reason:
+            clauses.append("reason LIKE ?")
+            params.append(f"%{reason}%")
+        where = "WHERE " + " AND ".join(clauses)
+        with sqlite3.connect(DB_FILE) as db:
+            cur = db.cursor()
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM container_snapshots {where}", params)
+                total_count = cur.fetchone()[0]
+                cur.execute(
+                    f"""SELECT snapshot_id, player_name, reason, x, y, z, world,
+                               block_type, revision, captured_at, occupied_slots,
+                               item_count, canonical_nbt
+                        FROM container_snapshots {where}
+                        ORDER BY captured_at DESC LIMIT ? OFFSET ?""",
+                    [*params, limit, offset],
+                )
+                rows = cur.fetchall()
+            except sqlite3.OperationalError:
+                return {"snapshots": [], "total_count": 0}
+        return {
+            "snapshots": [
+                {
+                    "snapshot_id": row[0], "player": row[1], "reason": row[2],
+                    "x": row[3], "y": row[4], "z": row[5], "dimension": row[6],
+                    "block_type": row[7], "revision": row[8], "captured_at": row[9],
+                    "occupied_slots": row[10], "item_count": row[11],
+                    "canonical_nbt": bool(row[12]),
+                }
+                for row in rows
+            ],
+            "total_count": total_count,
+        }
+
+    @app.get("/api/container-snapshots/{snapshot_id}")
+    async def get_container_snapshot(snapshot_id: str, _: bool = Depends(verify_secret)):
+        """Return a full canonical BlockData snapshot, including inventory and raw SNBT."""
+        if not os.path.exists(DB_FILE):
+            raise HTTPException(status_code=404, detail="Database not found")
+        with sqlite3.connect(DB_FILE) as db:
+            cur = db.cursor()
+            try:
+                cur.execute(
+                    """SELECT snapshot_id, player_name, reason, x, y, z, world,
+                              block_type, revision, captured_at, occupied_slots, item_count,
+                              canonical_nbt, snapshot_json, raw_snbt
+                       FROM container_snapshots WHERE snapshot_id = ?""",
+                    (snapshot_id,),
+                )
+                row = cur.fetchone()
+            except sqlite3.OperationalError:
+                row = None
+        if row is None:
+            raise HTTPException(status_code=404, detail="Container snapshot not found")
+        return {
+            "metadata": {
+                "snapshot_id": row[0], "player": row[1], "reason": row[2],
+                "x": row[3], "y": row[4], "z": row[5], "dimension": row[6],
+                "block_type": row[7], "revision": row[8], "captured_at": row[9],
+                "occupied_slots": row[10], "item_count": row[11],
+                "canonical_nbt": bool(row[12]),
+            },
+            "snapshot": _decode_json(row[13]),
+            "raw_snbt": row[14] or "",
+        }
+
     @app.get("/api/debug")
     async def get_debug(_: bool = Depends(verify_secret)):
         """Debug endpoint — dump last 20 container events with all fields"""
@@ -960,6 +1096,53 @@ def get_dashboard_html():
             font-size: 0.7rem;
         }
 
+
+        .nbt-button {
+            background: rgba(139,92,246,0.12);
+            color: #c4b5fd;
+            border: 1px solid rgba(139,92,246,0.35);
+            border-radius: 4px;
+            padding: 0.3rem 0.55rem;
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .nbt-button:hover { background: rgba(139,92,246,0.24); }
+        .nbt-button:disabled { opacity: 0.28; cursor: default; }
+        .nbt-modal {
+            position: fixed; inset: 0; z-index: 2000;
+            background: rgba(0,0,0,0.78);
+            display: flex; align-items: center; justify-content: center;
+            padding: 1rem;
+        }
+        .nbt-modal.hidden { display: none; }
+        .nbt-panel {
+            width: min(1100px, 96vw); max-height: 92vh;
+            background: var(--bg-primary); border: 1px solid rgba(139,92,246,0.45);
+            border-radius: 10px; box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .nbt-panel-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.85rem 1rem; background: rgba(139,92,246,0.1);
+            border-bottom: 1px solid var(--border);
+        }
+        .nbt-panel-header h3 { margin: 0; font-family: var(--font-mono); color: #c4b5fd; }
+        .nbt-close {
+            border: 0; background: transparent; color: var(--text-secondary);
+            font-size: 1.4rem; cursor: pointer;
+        }
+        .nbt-tabs { display: flex; gap: 0.4rem; padding: 0.65rem 1rem; border-bottom: 1px solid var(--border); }
+        .nbt-tabs button {
+            background: var(--bg-secondary); color: var(--text-secondary);
+            border: 1px solid var(--border); border-radius: 4px; padding: 0.35rem 0.65rem;
+            font-family: var(--font-mono); font-size: 0.68rem; cursor: pointer;
+        }
+        .nbt-tabs button.active { color: #c4b5fd; border-color: rgba(139,92,246,0.65); }
+        .nbt-content { margin: 0; padding: 1rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
+            font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.5; color: #d1d5db; }
+
         /* ─── RESPONSIVE ─── */
         @media (max-width: 768px) {
             .container { padding: 0.75rem; }
@@ -1063,10 +1246,11 @@ def get_dashboard_html():
                             <th>Position</th>
                             <th>Target</th>
                             <th>Timestamp</th>
+                            <th>NBT</th>
                         </tr>
                     </thead>
                     <tbody id="logs-body">
-                        <tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.8rem;">Awaiting authentication...</td></tr>
+                        <tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.8rem;">Awaiting authentication...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1086,11 +1270,29 @@ def get_dashboard_html():
         </div>
     </div>
 
+
+    <div class="nbt-modal hidden" id="nbt-modal" onclick="if(event.target===this) closeNbt()">
+        <div class="nbt-panel">
+            <div class="nbt-panel-header">
+                <h3 id="nbt-title">BlockData Snapshot</h3>
+                <button class="nbt-close" onclick="closeNbt()">×</button>
+            </div>
+            <div class="nbt-tabs">
+                <button id="tab-full" class="active" onclick="showNbtTab('full')">Full Snapshot</button>
+                <button id="tab-nbt" onclick="showNbtTab('nbt')">Canonical NBT</button>
+                <button id="tab-items" onclick="showNbtTab('items')">Inventory</button>
+                <button id="tab-snbt" onclick="showNbtTab('snbt')">Raw SNBT</button>
+            </div>
+            <pre class="nbt-content" id="nbt-content">Loading...</pre>
+        </div>
+    </div>
+
     <script>
         let secretKey = '';
         let currentPage = 1;
         let totalPages = 1;
         let perPage = 100;
+        let currentNbtPayload = null;
 
         function login() {
             const input = document.getElementById('secret-input');
@@ -1158,7 +1360,7 @@ def get_dashboard_html():
 
                 const tbody = document.getElementById('logs-body');
                 if (data.logs.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.8rem;">No events match current filters</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.8rem;">No events match current filters</td></tr>';
                     return;
                 }
 
@@ -1173,18 +1375,75 @@ def get_dashboard_html():
                     if (log.shulker_html) {
                         targetHtml = log.shulker_html;
                     }
+                    const hasNbt = Boolean(log.has_nbt || log.snapshot_id || log.blockdata);
+                    const nbtButton = hasNbt
+                        ? '<button class="nbt-button" onclick="openNbt(' + Number(log.id) + ', ' + JSON.stringify(log.snapshot_id || '') .replace(/</g, '\u003c') + ')">VIEW NBT</button>'
+                        : '<button class="nbt-button" disabled>NONE</button>';
                     return '<tr>' +
                         '<td class="player-name">' + escapeHtml(log.player) + '</td>' +
                         '<td><span class="action-tag action-' + getActionClass(log.action) + '">' + escapeHtml(log.action) + '</span>' + detailHtml + '</td>' +
                         '<td class="coords">' + log.x + ', ' + log.y + ', ' + log.z + '</td>' +
                         '<td class="target-type">' + targetHtml + '</td>' +
                         '<td class="timestamp">' + formatTime(log.time) + '</td>' +
+                        '<td>' + nbtButton + '</td>' +
                     '</tr>';
                 }).join('');
             } catch (e) {
                 console.error('Logs fetch error:', e);
             }
         }
+
+
+        async function openNbt(logId, snapshotId) {
+            const modal = document.getElementById('nbt-modal');
+            const content = document.getElementById('nbt-content');
+            modal.classList.remove('hidden');
+            content.textContent = 'Loading canonical BlockData payload...';
+            try {
+                let payload;
+                if (snapshotId) {
+                    const response = await fetch(`/api/container-snapshots/${encodeURIComponent(snapshotId)}?secret=${encodeURIComponent(secretKey)}`);
+                    if (!response.ok) throw new Error(`Snapshot request failed (${response.status})`);
+                    payload = await response.json();
+                } else {
+                    const response = await fetch(`/api/logs/${logId}/blockdata?secret=${encodeURIComponent(secretKey)}`);
+                    if (!response.ok) throw new Error(`BlockData request failed (${response.status})`);
+                    payload = await response.json();
+                }
+                currentNbtPayload = payload;
+                document.getElementById('nbt-title').textContent = snapshotId
+                    ? `Container Snapshot ${snapshotId.slice(0, 12)}`
+                    : `Event #${logId} BlockData`;
+                showNbtTab('full');
+            } catch (error) {
+                currentNbtPayload = { error: String(error) };
+                content.textContent = String(error);
+            }
+        }
+
+        function closeNbt() {
+            document.getElementById('nbt-modal').classList.add('hidden');
+            currentNbtPayload = null;
+        }
+
+        function showNbtTab(tab) {
+            ['full', 'nbt', 'items', 'snbt'].forEach(name => {
+                document.getElementById('tab-' + name).classList.toggle('active', name === tab);
+            });
+            const payload = currentNbtPayload || {};
+            const snapshot = payload.snapshot || payload.blockdata?.block_snapshot || payload.blockdata || {};
+            const entity = snapshot.block_entity || {};
+            let value = payload;
+            if (tab === 'nbt') value = entity.nbt || payload.blockdata?.block_snapshot?.block_entity?.nbt || {};
+            if (tab === 'items') value = entity.inventory || payload.blockdata?.block_snapshot?.block_entity?.inventory || [];
+            if (tab === 'snbt') value = payload.raw_snbt || entity.raw_snbt || payload.blockdata?.block_snapshot?.block_entity?.raw_snbt || 'No raw SNBT stored for this record.';
+            document.getElementById('nbt-content').textContent =
+                typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+        }
+
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeNbt();
+        });
 
         function escapeHtml(text) {
             if (!text) return '';
