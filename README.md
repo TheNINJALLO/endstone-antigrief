@@ -20,8 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> &bull;
-  <a href="#compatibility">Compatibility</a> &bull;
+  <a href="#what-it-does">What it does</a> &bull;
+  <a href="#how-to-use">How to use</a> &bull;
+  <a href="#commands-and-permissions">Commands</a> &bull;
   <a href="#install">Install</a> &bull;
   <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases">Releases</a>
 </p>
@@ -30,9 +31,39 @@
 
 BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, and WebUI for Endstone. This release is aligned with Endstone 0.11.8 and Minecraft Bedrock Dedicated Server 1.26.40, and is distributed as a Python wheel for direct installation in an Endstone server.
 
-## Capabilities
+## What it does
 
--
+- Records block changes, player interactions, and container activity through the BlockData API.
+- Captures exact container snapshots so staff can inspect and restore item-level changes.
+- Provides searchable audit history, player/device bans, rollback tools, and a browser-based review interface.
+
+## How to use
+
+1. Install and enable the required `blockdata-api` plugin before AntiGrief.
+2. Start the server once, then review the generated database and WebUI settings in the plugin data folder.
+3. Use `/ag` for a local lookup, `/ags` for staff searches, and `/agback` only after reviewing the matching records.
+4. Grant `antigrief.command.op` only to trusted investigators; normal players receive `antigrief.command.member` by default.
+
+## Commands and permissions
+
+| Command / usage | What it does | Access |
+|---|---|---|
+| `/ag [pos:pos] [time:float] [radius:float]` | Query nearby audit records | `antigrief.command.member` |
+| `/aghelp` | Show AntiGrief command help | `antigrief.command.member` |
+| `/agban <player:str> [reason:str]` | Ban a player from the server | `antigrief.command.op` |
+| `/agunban <player:str>` | Remove a player ban | `antigrief.command.op` |
+| `/agbanlist` | List AntiGrief player bans | `antigrief.command.op` |
+| `/ban-id <deviceID:str>` | Ban a device identifier | `antigrief.command.op` |
+| `/unban-id <deviceID:str>` | Remove a device ban | `antigrief.command.op` |
+| `/banlist-id` | List banned device identifiers | `antigrief.command.op` |
+| `/ags [type:str] [keyword:str] [time:float]` | Search audit records by type, keyword, and time | `antigrief.command.op` |
+| `/agback <time:float> [pos:pos] <radius:float> [player:str]` | Roll back matching block and container changes | `antigrief.command.op` |
+| `/ago [player:str]` | Inspect a player's recent activity | `antigrief.command.op` |
+| `/agclean <hours:float>` | Delete audit data older than the requested age | `antigrief.command.op` |
+| `/density [size:int]` | Find nearby entity-density hotspots | `antigrief.command.op` |
+| `/agcontainer [player:str] [hours:float] [radius:float]` | View container access logs (items taken/added) | `antigrief.command.op` |
+| `/agowner <action:str> [pos:pos] [player:str]` | Set, inspect, trust, or clear a container owner | `antigrief.command.op` |
+| `/agconfiscate <player:str>` | Retry item recovery from an administrator-confirmed rollback | `antigrief.command.op` |
 
 ## Compatibility
 
