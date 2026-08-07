@@ -1,0 +1,10 @@
+include README.md CHANGELOG.md LICENSE SECURITY.md CONTRIBUTING.md SUPPORT.md CODE_OF_CONDUCT.md
+recursive-include assets *.svg
+recursive-include docs *
+recursive-include wiki *.md
+recursive-include tests *.py
+recursive-include antigrief_companion_bp *
+recursive-include .github *.yml *.yaml *.md
+recursive-include scripts *.py *.sh *.ps1
+prune **/__pycache__
+global-exclude *.py[cod]
