@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "endstone-antigrief"
-version = "1.5.14"
+version = "1.5.15"
 description = "BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, and WebUI for Endstone"
 readme = "README.md"
 license = "MIT"
@@ -15,7 +15,7 @@ authors = [
 keywords = ["endstone", "plugin", "antigrief", "logging", "behavior", "webui", "admin"]
 
 dependencies = [
-    "endstone>=0.11.8,<0.12",
+    "endstone>=0.11.9,<0.12",
     "requests",
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",

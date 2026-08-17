@@ -1,5 +1,5 @@
 """
-AntiGrief Plugin v1.5.13 - BlockData Edition
+AntiGrief Plugin v1.5.15 - BlockData Edition
 Player behavior logging, analysis, and WebUI dashboard for Endstone
 """
 
@@ -60,7 +60,7 @@ def now_est():
 # CONFIGURATION
 # ============================================================================
 
-PLUGIN_VERSION = "v1.5.13"
+PLUGIN_VERSION = "v1.5.15"
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -681,7 +681,7 @@ writer_thread.start()
 
 class AntiGriefPlugin(Plugin):
     api_version = "0.11"
-    version = "1.5.13"
+    version = "1.5.15"
     depend = ["blockdata_api"]
 
     # Command definitions with English descriptions
