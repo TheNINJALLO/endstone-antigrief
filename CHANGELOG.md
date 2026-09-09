@@ -2,6 +2,13 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## [1.5.16] - 2026-09-09
+
+### Fixed
+- Prevented repeated SQLite flush failures when BlockData captures non-UTF-8 NBT strings. Container, player-inventory, interaction, recovery, and report JSON now escape surrogate characters while preserving the original bytes for restore.
+- Escaped diagnostic raw SNBT at the database boundary and handled already-buffered unescaped JSON without dropping records or changing the database schema.
+- Added persistence and batch-flush regressions for the reported `0x8a` byte at position 6125, all byte values, malformed UTF-8, valid Unicode, embedded NULs, and literal escape sequences.
+
 ## [1.5.13] - 2026-08-01
 
 ### Added
@@ -20,5 +27,6 @@ All notable changes are documented here. This project follows semantic versionin
 - Recursive bundle and custom storage-item rendering.
 - Coordinated rollback, confirmed item recovery, and printable grief reports.
 
-[Unreleased]: https://github.com/TheNINJALLO/endstone-antigrief/compare/v1.5.13...HEAD
+[Unreleased]: https://github.com/TheNINJALLO/endstone-antigrief/compare/v1.5.16...HEAD
+[1.5.16]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.16
 [1.5.13]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.13

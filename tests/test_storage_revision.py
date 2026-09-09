@@ -7,7 +7,7 @@ def load_storage_functions(db_path):
     source_path = Path(__file__).parents[1] / "src/endstone_antigrief/antigrief_plugin.py"
     source = source_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
-    wanted = {"_sqlite_signed_int", "insert_container_snapshots"}
+    wanted = {"_sqlite_signed_int", "_sqlite_text", "insert_container_snapshots"}
     functions = [
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in wanted

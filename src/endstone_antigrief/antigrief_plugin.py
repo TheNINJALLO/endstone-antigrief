@@ -1,5 +1,5 @@
 """
-AntiGrief Plugin v1.5.15 - BlockData Edition
+AntiGrief Plugin v1.5.16 - BlockData Edition
 Player behavior logging, analysis, and WebUI dashboard for Endstone
 """
 
@@ -60,7 +60,7 @@ def now_est():
 # CONFIGURATION
 # ============================================================================
 
-PLUGIN_VERSION = "v1.5.15"
+PLUGIN_VERSION = "v1.5.16"
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -511,6 +511,18 @@ buffer_lock = threading.Lock()
 db_write_lock = threading.Lock()
 is_cleaning = False
 
+def _sqlite_text(value):
+    """Escape lone surrogates for SQLite TEXT, preserving serialized JSON data.
+
+    Native NBT uses surrogateescape for non-UTF-8 bytes. Escaping those code
+    points in serialized JSON lets json.loads recover them for exact restore.
+    Raw SNBT is diagnostic text and retains a visible escape for each byte.
+    """
+    if value is None:
+        return None
+    return value.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def insert_records(records, has_blockdata=False):
     """Insert records into database"""
     with sqlite3.connect(DB_FILE) as db:
@@ -522,7 +534,7 @@ def insert_records(records, has_blockdata=False):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (data['name'], data['action'], data['coordinates']['x'],
                       data['coordinates']['y'], data['coordinates']['z'],
-                      data['type'], data['world'], data['time'], data['blockdata']))
+                      data['type'], data['world'], data['time'], _sqlite_text(data['blockdata'])))
             else:
                 cur.execute("""
                     INSERT INTO interactions (name, action, x, y, z, type, world, time)
@@ -563,7 +575,7 @@ def insert_container_snapshots(records):
                 record.get('block_type'), _sqlite_signed_int(revision), revision_text,
                 record['captured_at'], record.get('occupied_slots', 0),
                 record.get('item_count', 0), 1 if record.get('canonical_nbt') else 0,
-                record['snapshot_json'], record.get('raw_snbt')
+                _sqlite_text(record['snapshot_json']), _sqlite_text(record.get('raw_snbt'))
             ))
         db.commit()
 
@@ -596,7 +608,7 @@ def insert_player_inventory_snapshots(records):
                 record.get('occupied_main', 0), record.get('occupied_armor', 0),
                 record.get('occupied_offhand', 0), record.get('occupied_ender_chest', 0),
                 record.get('item_count', 0), record.get('storage_item_count', 0),
-                record['snapshot_json'],
+                _sqlite_text(record['snapshot_json']),
             ))
         db.commit()
 
@@ -681,7 +693,7 @@ writer_thread.start()
 
 class AntiGriefPlugin(Plugin):
     api_version = "0.11"
-    version = "1.5.15"
+    version = "1.5.16"
     depend = ["blockdata_api"]
 
     # Command definitions with English descriptions
@@ -983,7 +995,7 @@ class AntiGriefPlugin(Plugin):
             'item_count': summary['total_item_count'],
             'storage_item_count': summary['storage_item_count'],
             'snapshot_json': json.dumps(
-                self.blockdata.json_safe(snapshot), ensure_ascii=False,
+                self.blockdata.json_safe(snapshot), ensure_ascii=True,
                 separators=(',', ':'),
             ),
         })
@@ -1320,7 +1332,7 @@ class AntiGriefPlugin(Plugin):
                 (
                     theft_key, str(player_name), str(owner_name or ""),
                     self._normalise_world_key(world), int(x), int(y), int(z),
-                    json.dumps(item, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(item, ensure_ascii=True, separators=(",", ":")),
                     amount, str(reason), now, now,
                     int(destination_slot) if destination_slot is not None else None,
                     str(rollback_id),
@@ -1540,7 +1552,7 @@ class AntiGriefPlugin(Plugin):
                     'returned_amount': removed,
                     'destination_slot': actual_slot,
                     'item': item,
-                }, ensure_ascii=False, separators=(',', ':')),
+                }, ensure_ascii=True, separators=(',', ':')),
             })
         for touched_rollback_id in touched_rollback_ids:
             try:
@@ -1677,7 +1689,7 @@ class AntiGriefPlugin(Plugin):
             'occupied_slots': summary['occupied_slots'],
             'item_count': summary['item_count'],
             'canonical_nbt': summary['canonical_nbt'],
-            'snapshot_json': json.dumps(snapshot_for_storage, ensure_ascii=False, separators=(',', ':')),
+            'snapshot_json': json.dumps(snapshot_for_storage, ensure_ascii=True, separators=(',', ':')),
             'raw_snbt': raw_snbt,
         })
         return snapshot_id
@@ -3019,7 +3031,7 @@ class AntiGriefPlugin(Plugin):
         }
         evidence_hash = hashlib.sha256(
             json.dumps(
-                evidence_core, ensure_ascii=False, sort_keys=True,
+                evidence_core, ensure_ascii=True, sort_keys=True,
                 separators=(',', ':'), default=str,
             ).encode('utf-8')
         ).hexdigest()
@@ -3102,10 +3114,10 @@ class AntiGriefPlugin(Plugin):
                     int(summary.get('containers_broken', 0)),
                     int(summary.get('items_reported', 0)),
                     int(summary.get('items_recovered', 0)), report['evidence_hash'],
-                    json.dumps(report.get('players') or [], ensure_ascii=False),
-                    json.dumps(report.get('worlds') or [], ensure_ascii=False),
-                    json.dumps(summary, ensure_ascii=False, separators=(',', ':')),
-                    json.dumps(report, ensure_ascii=False, separators=(',', ':'), default=str),
+                    json.dumps(report.get('players') or [], ensure_ascii=True),
+                    json.dumps(report.get('worlds') or [], ensure_ascii=True),
+                    json.dumps(summary, ensure_ascii=True, separators=(',', ':')),
+                    json.dumps(report, ensure_ascii=True, separators=(',', ':'), default=str),
                 ),
             )
             db.commit()
@@ -3127,7 +3139,7 @@ class AntiGriefPlugin(Plugin):
             db.execute(
                 'UPDATE grief_reports SET report_json=? WHERE report_id=?',
                 (
-                    json.dumps(report, ensure_ascii=False, separators=(',', ':'), default=str),
+                    json.dumps(report, ensure_ascii=True, separators=(',', ':'), default=str),
                     str(report_id),
                 ),
             )
@@ -3187,8 +3199,8 @@ class AntiGriefPlugin(Plugin):
                    WHERE report_id=?""",
                 (
                     status, recovery['returned_to_containers'],
-                    json.dumps(report['summary'], ensure_ascii=False, separators=(',', ':')),
-                    json.dumps(report, ensure_ascii=False, separators=(',', ':'), default=str),
+                    json.dumps(report['summary'], ensure_ascii=True, separators=(',', ':')),
+                    json.dumps(report, ensure_ascii=True, separators=(',', ':'), default=str),
                     str(row[0]),
                 ),
             )
@@ -3293,8 +3305,8 @@ class AntiGriefPlugin(Plugin):
                    WHERE report_id=?""",
                 (
                     completed_at, status, recovery['returned_to_containers'],
-                    json.dumps(report['summary'], ensure_ascii=False, separators=(',', ':')),
-                    json.dumps(report, ensure_ascii=False, separators=(',', ':'), default=str),
+                    json.dumps(report['summary'], ensure_ascii=True, separators=(',', ':')),
+                    json.dumps(report, ensure_ascii=True, separators=(',', ':'), default=str),
                     str(report_id),
                 ),
             )
@@ -3818,7 +3830,7 @@ class AntiGriefPlugin(Plugin):
                 saved_data['authorized'] = bool(container_authorized)
                 saved_data['unauthorized'] = not bool(container_authorized)
             blockdata_json = json.dumps(
-                saved_data, ensure_ascii=False, separators=(',', ':')
+                saved_data, ensure_ascii=True, separators=(',', ':')
             ) if saved_data else ""
         except Exception as error:
             blockdata_json = ""
@@ -3989,7 +4001,7 @@ class AntiGriefPlugin(Plugin):
                     'world': dimension,
                     'time': event_time,
                     'blockdata': json.dumps(
-                        payload, ensure_ascii=False, separators=(',', ':')
+                        payload, ensure_ascii=True, separators=(',', ':')
                     ),
                 })
 
@@ -4018,7 +4030,7 @@ class AntiGriefPlugin(Plugin):
                             before_entity.get('canonical_nbt')
                             or after_entity.get('canonical_nbt')
                         ),
-                    }, ensure_ascii=False, separators=(',', ':')),
+                    }, ensure_ascii=True, separators=(',', ':')),
                 })
 
             if changes or metadata_changed:
@@ -4192,7 +4204,7 @@ class AntiGriefPlugin(Plugin):
                 'owner_name': tracked.get('owner_name'),
                 'authorized': bool(tracked.get('authorized', True)),
                 'unauthorized': not bool(tracked.get('authorized', True)),
-            }, ensure_ascii=False, separators=(',', ':'))
+            }, ensure_ascii=True, separators=(',', ':'))
 
         data_buffers['chest'].append({
             'name': player_name,
@@ -4263,7 +4275,7 @@ class AntiGriefPlugin(Plugin):
                         block, actor_dim, actor_type, 'explosion'
                     )
                     blockdata_json = json.dumps(
-                        saved_data, ensure_ascii=False, separators=(',', ':')
+                        saved_data, ensure_ascii=True, separators=(',', ':')
                     ) if saved_data else ""
                 except (RuntimeError, SystemError, OSError):
                     continue

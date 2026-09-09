@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img alt="Endstone 0.11.9" src="https://img.shields.io/badge/Endstone-0.11.9-52b7a8?style=flat-square">
+  <img alt="Endstone 0.11.10" src="https://img.shields.io/badge/Endstone-0.11.10-52b7a8?style=flat-square">
   <img alt="API 0.11" src="https://img.shields.io/badge/API-0.11-63b8ff?style=flat-square">
-  <img alt="BDS 1.26.44" src="https://img.shields.io/badge/BDS-1.26.44-8b7dff?style=flat-square">
+  <img alt="BDS 1.26.45" src="https://img.shields.io/badge/BDS-1.26.45-8b7dff?style=flat-square">
   <img alt="Python >=3.10" src="https://img.shields.io/badge/Python-%3E=3.10-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white">
 </p>
 
@@ -29,7 +29,7 @@
 
 ## Overview
 
-BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, and WebUI for Endstone. This release is aligned with Endstone 0.11.9 and Minecraft Bedrock Dedicated Server 1.26.44, and is distributed as a Python wheel for direct installation in an Endstone server.
+BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, and WebUI for Endstone. This release is aligned with Endstone 0.11.10 and Minecraft Bedrock Dedicated Server 1.26.45, and is distributed as a Python wheel for direct installation in an Endstone server.
 
 ## What it does
 
@@ -69,24 +69,24 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 
 | Component | Supported version |
 |---|---|
-| Endstone | `0.11.9` |
+| Endstone | `0.11.10` |
 | Endstone API | `0.11` |
-| Bedrock Dedicated Server | `1.26.44` |
+| Bedrock Dedicated Server | `1.26.45` |
 | Python | `>=3.10` |
-| Plugin release | `v1.5.15` |
+| Plugin release | `v1.5.16` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v1.5.15 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
+gh release download v1.5.16 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
 
 > [!IMPORTANT]
-> Use Endstone `0.11.9` with BDS `1.26.44`. Back up worlds and plugin data before upgrading a production server.
+> Use Endstone `0.11.10` with BDS `1.26.45`. Back up worlds and plugin data before upgrading a production server.
 
 ## Configuration and secrets
 
@@ -127,14 +127,16 @@ The BlockData installation must include both files from the complete platform ZI
 
 The BDS version, Endstone version, Python ABI, platform, and BlockData release must match. AntiGrief declares `depend = ["blockdata_api"]` and dynamically loads the bridge shipped in the matching inspector wheel.
 
-BlockData v0.5.2 targets BDS 1.26.40, Endstone 0.11.8, and CPython 3.14; do not load that native build on BDS 1.26.44. Deploy this AntiGrief wheel only after installing a BlockData build compiled for BDS 1.26.44, Endstone 0.11.9, the server's Python ABI, and the target platform.
+Use BlockData v0.6.3 for BDS 1.26.45, Endstone 0.11.10, and CPython 3.14, choosing the complete ZIP for your server platform.
+
+AntiGrief v1.5.16 fixes repeated SQLite flush failures caused by non-UTF-8 item NBT. It escapes canonical JSON for storage and preserves the original bytes for restore. Update AntiGrief as well as BlockData: safe diagnostic SNBT alone does not fix older AntiGrief JSON serialization. The update does not require a database migration.
 
 ## Installation
 
 1. Stop the server.
 2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
 3. Copy the two matching BlockData files into `plugins/`.
-4. Copy `endstone_antigrief-1.5.15-py3-none-any.whl` into `plugins/`.
+4. Copy `endstone_antigrief-1.5.16-py3-none-any.whl` into `plugins/`.
 5. Start the server and verify the console reports `BlockData API connected`.
 6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
