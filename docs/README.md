@@ -1,11 +1,11 @@
 <p align="center">
-  <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.17">
+  <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.18">
     <img src="https://raw.githubusercontent.com/TheNINJALLO/endstone-antigrief/main/assets/banner.svg" alt="AntiGrief for Endstone" width="100%">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.17"><img alt="Release v1.5.17" src="https://img.shields.io/badge/Release-v1.5.17-8b5cf6?style=for-the-badge&logo=github"></a>
+  <a href="https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.18"><img alt="Release v1.5.18" src="https://img.shields.io/badge/Release-v1.5.18-8b5cf6?style=for-the-badge&logo=github"></a>
   <a href="https://github.com/TheNINJALLO/endstone-antigrief/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/TheNINJALLO/endstone-antigrief/ci.yml?branch=main&style=for-the-badge"></a>
   <img alt="Endstone" src="https://img.shields.io/badge/Endstone-0.11.12-10b981?style=for-the-badge">
   <img alt="BDS" src="https://img.shields.io/badge/BDS-1.26.33-2563eb?style=for-the-badge">
@@ -15,7 +15,7 @@
 
 Welcome to the **AntiGrief for Endstone** official documentation portal. AntiGrief is an advanced, high-performance moderation, audit logging, precise rollback, item recovery, and evidence generation framework designed for Minecraft Bedrock Edition (BDS) servers powered by Endstone.
 
-> **AntiGrief v1.5.17** requires **Endstone 0.11.12** and **BlockData API v0.6.6+**. Ensure the `blockdata_api` C++ native extension and Python wheel are installed prior to starting AntiGrief.
+> **AntiGrief v1.5.18** requires **Endstone 0.11.12** and **BlockData API v0.6.6+**. Ensure the `blockdata_api` C++ native extension and Python wheel are installed prior to starting AntiGrief.
 
 ---
 

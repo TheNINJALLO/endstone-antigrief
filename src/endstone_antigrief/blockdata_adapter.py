@@ -92,7 +92,8 @@ class BlockDataAdapter:
         try:
             manager = getattr(server, "plugin_manager", None)
             provider = manager.get_plugin("blockdata_api") if manager is not None else None
-            description = getattr(provider, "description", None)
+            get_description = getattr(provider, "_get_description", None)
+            description = get_description() if callable(get_description) else None
             provider_version = getattr(description, "version", None)
             bridge_version = getattr(bridge, "__version__", None)
             if isinstance(provider_version, str) and isinstance(bridge_version, str) and provider_version != bridge_version:

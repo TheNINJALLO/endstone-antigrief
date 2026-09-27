@@ -27,7 +27,7 @@ def test_version_mismatch_is_rejected_before_calling_native_bridge(monkeypatch):
     bridge = SimpleNamespace(__version__="0.6.6", available=Mock())
     monkeypatch.setattr(loaded.importlib, "import_module", lambda name: bridge)
     server = SimpleNamespace(plugin_manager=SimpleNamespace(
-        get_plugin=lambda name: SimpleNamespace(description=SimpleNamespace(version="0.4.8"))))
+        get_plugin=lambda name: SimpleNamespace(_get_description=lambda: SimpleNamespace(version="0.4.8"))))
     adapter = loaded.BlockDataAdapter()
     assert not adapter.connect(server)
     assert "do not match" in adapter.error

@@ -13,7 +13,7 @@ This guide provides solutions for common issues, error messages, and operational
 | **`Degraded Metadata` badge in WebUI** | Item in container or player inventory contains non-standard binary NBT or malformed legacy color bytes. | No action required; AntiGrief safely fell back to clean Endstone text parsing to prevent dashboard crashes. |
 | **`/agback` reports `Container verification mismatch`** | Target container was moved, destroyed, or obscured by newly placed blocks during rollback. | Clear obstruction above/around container and re-run `/agback`. |
 | **Pending item confiscation not running** | Offending player is offline or has empty slots. | Recovery rows remain safely queued in `agdata.db`. Execute `/agconfiscate <player>` when player logs back on. |
-| **Multiple wheels found error on startup** | Older `endstone_antigrief-*.whl` files left in `plugins/`. | Delete all older AntiGrief wheel files from `plugins/` so only `endstone_antigrief-1.5.17-py3-none-any.whl` remains. |
+| **Multiple wheels found error on startup** | Older `endstone_antigrief-*.whl` files left in `plugins/`. | Delete all older AntiGrief wheel files from `plugins/` so only `endstone_antigrief-1.5.18-py3-none-any.whl` remains. |
 
 ---
 

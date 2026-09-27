@@ -1,6 +1,6 @@
 # 📜 Command Reference
 
-This document provides the complete command reference for **AntiGrief v1.5.17**, organized by administrative role and execution scope.
+This document provides the complete command reference for **AntiGrief v1.5.18**, organized by administrative role and execution scope.
 
 ---
 

@@ -2,6 +2,10 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## [1.5.18] - 2026-09-27
+
+- Read native provider metadata through Endstone's bound description method so incompatible BlockData versions are rejected before bridge calls. Verified against the real native plugin wrapper.
+
 ## [1.5.17] - 2026-09-27
 
 ### Fixed

@@ -1,9 +1,9 @@
-# Install AntiGrief 1.5.17
+# Install AntiGrief 1.5.18
 
 The supported native release set is Linux x86-64, Endstone 0.11.12, BDS 1.26.51.1, and CPython 3.14.
 
 1. Stop Endstone and back up the AntiGrief data folder.
-2. Replace the previous AntiGrief wheel with `endstone_antigrief-1.5.17-py3-none-any.whl`.
+2. Replace the previous AntiGrief wheel with `endstone_antigrief-1.5.18-py3-none-any.whl`.
 3. Install `endstone_blockdata_inspector-0.6.6-cp314-cp314-linux_x86_64.whl` from [BlockData 0.6.6](https://github.com/TheNINJALLO/endstone-blockdata-api/releases/tag/v0.6.6) in `plugins/`. This wheel includes and registers its matching native provider automatically.
 4. Remove older BlockData provider libraries and inspector wheels from `plugins/` while stopped. Keep data folders. Do not mix bridge and native versions or copy the optional standalone `.so` alongside the bundle wheel.
 5. Restart and confirm AntiGrief reports its BlockData connection before testing container logging and rollback.
