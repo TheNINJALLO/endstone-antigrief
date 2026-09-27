@@ -2,6 +2,14 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## [1.5.17] - 2026-09-27
+
+### Fixed
+- Prefer the current BlockData inspector bridge and detect mixed native/bridge versions before calling the native API.
+- Clear stale capability state and reconnect after the native service becomes unavailable.
+- Document the complete BlockData 0.6.6 bundle wheel and its exact Linux runtime requirements.
+- Retain the 1.5.16 SQLite Unicode fixes; 48 regression tests pass.
+
 ## [1.5.16] - 2026-09-09
 
 ### Fixed

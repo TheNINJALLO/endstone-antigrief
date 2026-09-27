@@ -73,14 +73,14 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 | Endstone API | `0.11` |
 | Bedrock Dedicated Server | `1.26.45` |
 | Python | `>=3.10` |
-| Plugin release | `v1.5.16` |
+| Plugin release | `v1.5.17` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v1.5.16 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
+gh release download v1.5.17 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
@@ -129,14 +129,14 @@ The BDS version, Endstone version, Python ABI, platform, and BlockData release m
 
 Use BlockData v0.6.3 for BDS 1.26.45, Endstone 0.11.10, and CPython 3.14, choosing the complete ZIP for your server platform.
 
-AntiGrief v1.5.16 fixes repeated SQLite flush failures caused by non-UTF-8 item NBT. It escapes canonical JSON for storage and preserves the original bytes for restore. Update AntiGrief as well as BlockData: safe diagnostic SNBT alone does not fix older AntiGrief JSON serialization. The update does not require a database migration.
+AntiGrief v1.5.17 fixes repeated SQLite flush failures caused by non-UTF-8 item NBT. It escapes canonical JSON for storage and preserves the original bytes for restore. Update AntiGrief as well as BlockData: safe diagnostic SNBT alone does not fix older AntiGrief JSON serialization. The update does not require a database migration.
 
 ## Installation
 
 1. Stop the server.
 2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
 3. Copy the two matching BlockData files into `plugins/`.
-4. Copy `endstone_antigrief-1.5.16-py3-none-any.whl` into `plugins/`.
+4. Copy `endstone_antigrief-1.5.17-py3-none-any.whl` into `plugins/`.
 5. Start the server and verify the console reports `BlockData API connected`.
 6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
@@ -274,6 +274,6 @@ MIT License. The BlockData API dependency is distributed under its own Apache-2.
 - Runtime state and the BlockData adapter are now initialized in `on_load()`, after Endstone attaches the native plugin wrapper.
 - This fixes the Linux SIGSEGV seen in `pybind11::type_caster_base<endstone::Logger>` during `PyPluginLoader::loadPlugins`.
 
-## 1.5.16 dependency repair
+## 1.5.17 dependency repair
 
 AntiGrief now prefers the current BlockData inspector bridge, rejects mismatched native/bridge versions before use, and reconnects after stale service failures. Install the complete BlockData 0.6.6 bundle wheel; see [installation](docs/installation.md) for the supported Linux runtime and upgrade steps.
