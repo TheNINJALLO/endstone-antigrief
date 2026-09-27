@@ -1,4 +1,4 @@
-# AntiGrief 1.5.17
+# AntiGrief 1.5.18
 
 Repair current bridge discovery, reject mixed provider versions, and reconnect after stale BlockData service failures. Use the BlockData 0.6.6 bundle wheel on Linux x86-64 with Endstone 0.11.12 / BDS 1.26.51.1 / Python 3.14. No Windows native provider is included.
 
