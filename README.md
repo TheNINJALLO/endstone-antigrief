@@ -273,3 +273,7 @@ MIT License. The BlockData API dependency is distributed under its own Apache-2.
 - Removed access to Endstone's native `Plugin.logger` property from the Python constructor.
 - Runtime state and the BlockData adapter are now initialized in `on_load()`, after Endstone attaches the native plugin wrapper.
 - This fixes the Linux SIGSEGV seen in `pybind11::type_caster_base<endstone::Logger>` during `PyPluginLoader::loadPlugins`.
+
+## 1.5.16 dependency repair
+
+AntiGrief now prefers the current BlockData inspector bridge, rejects mismatched native/bridge versions before use, and reconnects after stale service failures. Install the complete BlockData 0.6.6 bundle wheel; see [installation](docs/installation.md) for the supported Linux runtime and upgrade steps.

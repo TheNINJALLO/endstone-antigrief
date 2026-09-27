@@ -137,11 +137,11 @@ def test_bridge_loader_continues_when_top_level_candidate_package_is_missing(mon
 
     def fake_import(name):
         attempts.append(name)
-        if name == "endstone_blockdata._endstone_blockdata_live":
-            error = ModuleNotFoundError("No module named 'endstone_blockdata'")
-            error.name = "endstone_blockdata"
-            raise error
         if name == "endstone_blockdata_inspector._endstone_blockdata_live":
+            error = ModuleNotFoundError("No module named 'endstone_blockdata_inspector'")
+            error.name = "endstone_blockdata_inspector"
+            raise error
+        if name == "endstone_blockdata._endstone_blockdata_live":
             return Bridge
         raise AssertionError(name)
 
@@ -149,8 +149,8 @@ def test_bridge_loader_continues_when_top_level_candidate_package_is_missing(mon
     adapter = loaded.BlockDataAdapter()
     assert adapter.connect(object()) is True
     assert attempts[:2] == [
-        "endstone_blockdata._endstone_blockdata_live",
         "endstone_blockdata_inspector._endstone_blockdata_live",
+        "endstone_blockdata._endstone_blockdata_live",
     ]
 
 
@@ -174,5 +174,5 @@ def test_bridge_loader_does_not_mask_internal_missing_dependency(monkeypatch):
     monkeypatch.setattr(loaded.importlib, "import_module", fake_import)
     adapter = loaded.BlockDataAdapter()
     assert adapter.connect(object()) is False
-    assert attempts == ["endstone_blockdata._endstone_blockdata_live"]
+    assert attempts == ["endstone_blockdata_inspector._endstone_blockdata_live"]
     assert "libmissing_inside_bridge" in adapter.error

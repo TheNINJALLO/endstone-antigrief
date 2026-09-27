@@ -22,11 +22,11 @@ class BlockDataAdapter:
 
     PROVIDER = "endstone-blockdata-api"
     SCHEMA_VERSION = 2
-    EXPECTED_VERSION = "0.4.8"
+    EXPECTED_VERSION = "0.6.6"
 
     _BRIDGE_MODULES = (
-        "endstone_blockdata._endstone_blockdata_live",
         "endstone_blockdata_inspector._endstone_blockdata_live",
+        "endstone_blockdata._endstone_blockdata_live",
         "_endstone_blockdata_live",
     )
 
@@ -60,6 +60,11 @@ class BlockDataAdapter:
 
     def connect(self, server: Any) -> bool:
         """Load the bundled bridge and connect it to the native BlockData service."""
+        # Never retain a stale bridge/capability set after a failed reconnect.
+        self.bridge = None
+        self.capabilities = {}
+        self.player_inventory_capabilities = {}
+        self.player_inventory_error = "player inventory service is not registered"
         last_error: Exception | None = None
         bridge = None
         for module_name in self._BRIDGE_MODULES:
@@ -79,14 +84,24 @@ class BlockDataAdapter:
 
         if bridge is None:
             self.error = (
-                "matching BlockData inspector wheel/native bridge is not installed"
+                "matching BlockData bundle wheel/native bridge is not installed"
                 + (f": {last_error}" if last_error else "")
             )
             return False
 
         try:
+            manager = getattr(server, "plugin_manager", None)
+            provider = manager.get_plugin("blockdata_api") if manager is not None else None
+            description = getattr(provider, "description", None)
+            provider_version = getattr(description, "version", None)
+            bridge_version = getattr(bridge, "__version__", None)
+            if isinstance(provider_version, str) and isinstance(bridge_version, str) and provider_version != bridge_version:
+                self.error = (f"BlockData native plugin {provider_version} and bridge {bridge_version} do not match; "
+                              "remove the older files and install the matching bundle wheel")
+                return False
             if not bridge.available(server):
-                self.error = "endstone:blockdata:v2 native service is not registered"
+                self.error = ("endstone:blockdata:v2 native service is not registered; "
+                              "install the complete matching BlockData bundle and check the native loader log")
                 return False
             self.capabilities = dict(bridge.capabilities(server))
         except Exception as error:
@@ -121,6 +136,21 @@ class BlockDataAdapter:
                 f"install BlockData {self.EXPECTED_VERSION} or newer"
             )
         return True
+
+    def check_connection(self, server: Any) -> bool:
+        """Detect a disabled/reloaded native provider without retaining stale state."""
+        if self.bridge is None:
+            return False
+        try:
+            if self.bridge.available(server):
+                return True
+            self.error = "BlockData native service was unregistered; waiting for its provider"
+        except Exception as error:
+            self.error = f"BlockData native service health check failed: {error}"
+        self.bridge = None
+        self.capabilities = {}
+        self.player_inventory_capabilities = {}
+        return False
 
     def require(self, *capabilities: str) -> None:
         if self.bridge is None:

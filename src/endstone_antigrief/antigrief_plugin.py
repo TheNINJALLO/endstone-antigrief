@@ -884,8 +884,9 @@ class AntiGriefPlugin(Plugin):
             )
 
     def _ensure_blockdata_ready(self) -> bool:
-        if self._blockdata_ready:
+        if self._blockdata_ready and self.blockdata.check_connection(self.server):
             return True
+        self._blockdata_ready = False
         if self._connect_blockdata_services():
             return True
         self._schedule_blockdata_connect_retry()

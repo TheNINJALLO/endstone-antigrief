@@ -2,6 +2,7 @@ name: Build wheel and publish release
 
 on:
   push:
+    branches: [main]
     tags:
       - "v*"
   workflow_dispatch:

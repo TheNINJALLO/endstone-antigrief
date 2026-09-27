@@ -1,6 +1,6 @@
 # 🦖 Pterodactyl Panel Deployment Guide
 
-This document explains how to deploy and run **AntiGrief v1.5.13** on servers managed by Pterodactyl Panel.
+This document explains how to deploy and run **AntiGrief v1.5.16** on servers managed by Pterodactyl Panel.
 
 ---
 
@@ -25,6 +25,6 @@ Ensure your Pterodactyl server file manager reflects the following structure ins
 ```text
 plugins/
 ├── blockdata_api.so                          (Linux C++ native extension)
-├── endstone_blockdata_api-0.4.8-py3-none-any.whl (BlockData inspector wheel)
-└── endstone_antigrief-1.5.13-py3-none-any.whl    (AntiGrief plugin wheel)
+├── endstone_blockdata_api-0.6.6-py3-none-any.whl (BlockData inspector wheel)
+└── endstone_antigrief-1.5.16-py3-none-any.whl    (AntiGrief plugin wheel)
 ```
