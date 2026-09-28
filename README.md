@@ -277,3 +277,5 @@ MIT License. The BlockData API dependency is distributed under its own Apache-2.
 ## 1.5.18 dependency repair
 
 AntiGrief now prefers the current BlockData inspector bridge, rejects mismatched native/bridge versions before use, and reconnects after stale service failures. Install the complete BlockData 0.6.6 bundle wheel; see [installation](docs/installation.md) for the supported Linux runtime and upgrade steps.
+
+The exact released AntiGrief and BlockData wheels passed a disposable BDS integration test covering native service startup, container and item NBT, nested bundles, invalid-write rejection, and clean shutdown. [Validation results and artifact hashes](docs/validation/1.5.18.json).
