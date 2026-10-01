@@ -1,5 +1,5 @@
 """
-AntiGrief Plugin v1.5.18 - BlockData Edition
+AntiGrief Plugin v1.5.19 - BlockData Edition
 Player behavior logging, analysis, and WebUI dashboard for Endstone
 """
 
@@ -60,7 +60,7 @@ def now_est():
 # CONFIGURATION
 # ============================================================================
 
-PLUGIN_VERSION = "v1.5.18"
+PLUGIN_VERSION = "v1.5.19"
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -693,7 +693,7 @@ writer_thread.start()
 
 class AntiGriefPlugin(Plugin):
     api_version = "0.11"
-    version = "1.5.18"
+    version = "1.5.19"
     depend = ["blockdata_api"]
 
     # Command definitions with English descriptions
@@ -746,6 +746,11 @@ class AntiGriefPlugin(Plugin):
         "agback": {
             "description": lang["cmd_tyback_desc"],
             "usages": ["/agback <time:float> [pos:pos] <radius:float> [player:str]"],
+            "permissions": ["antigrief.command.op"],
+        },
+        "agstop": {
+            "description": "Cancel pending rollback work and item recovery (all by default)",
+            "usages": ["/agstop [rollback_id:str]"],
             "permissions": ["antigrief.command.op"],
         },
         "ago": {
@@ -808,6 +813,9 @@ class AntiGriefPlugin(Plugin):
         self._blockdata_connect_attempts = 0
         self._blockdata_connected_once = False
         self._shutting_down = False
+        self._active_rollbacks = set()
+        self._cancelled_rollbacks = set()
+        self._recovery_warning_times = {}
         self.logger.info("AntiGrief Plugin loading...")
 
     def _connect_blockdata_services(self, *, initial=False) -> bool:
@@ -1315,6 +1323,8 @@ class AntiGriefPlugin(Plugin):
         """
         if not rollback_id or not str(reason).startswith('rollback_recovery:'):
             return None
+        if self._rollback_cancelled(rollback_id):
+            return None
         try:
             amount = max(1, int(amount))
         except (TypeError, ValueError):
@@ -1362,12 +1372,12 @@ class AntiGriefPlugin(Plugin):
         )
 
     def _ensure_recovery_destination(self, world, x, y, z, item, destination_slot):
-        """Ensure the reported container contains the historical item before removal.
+        """Read-only verification of the slot restored by the rollback placement pass.
 
-        Restoring first means a native write failure can never delete an item from a
-        player without a destination. The preferred historical slot is used when it
-        is empty or already contains the same canonical stack. Otherwise an empty
-        slot is selected rather than overwriting later legitimate contents.
+        Recovery sweeps must never refill a container: a player may have no matching
+        items, or the owner may already have collected the restored contents. Only
+        the original slot can authorize removal; another stack is not evidence that
+        this slot was restored.
         """
         if not self._ensure_blockdata_ready():
             return False, None
@@ -1378,65 +1388,90 @@ class AntiGriefPlugin(Plugin):
         if current is None or not self.blockdata.is_container(current):
             return False, None
 
-        inventory = self.blockdata.inventory_map(current)
-        capacity = self.blockdata.container_capacity(current)
-        desired = self.blockdata.normalize_item_for_patch(deepcopy(item))
-        desired_count = max(1, self.blockdata.item_count(desired))
         try:
             preferred = int(destination_slot)
         except (TypeError, ValueError):
-            preferred = -1
-
-        if 0 <= preferred < capacity:
-            existing = inventory.get(preferred)
-            if existing and self._same_canonical_item(existing, desired):
-                if self.blockdata.item_count(existing) >= desired_count:
-                    return True, preferred
-                chosen_slot = preferred
-            elif existing is None:
-                chosen_slot = preferred
-            else:
-                chosen_slot = None
-        else:
-            chosen_slot = None
-
-        if chosen_slot is None:
-            for slot, existing in inventory.items():
-                if self._same_canonical_item(existing, desired):
-                    if self.blockdata.item_count(existing) >= desired_count:
-                        return True, slot
-                    chosen_slot = slot
-                    break
-        if chosen_slot is None:
-            chosen_slot = next((slot for slot in range(capacity) if slot not in inventory), None)
-        if chosen_slot is None:
             return False, None
-
-        patch = self.blockdata._empty_patch(current)
-        patch['inventory_updates'] = {chosen_slot: desired}
-        result = self.blockdata.apply(self.server, patch, 'fail_if_changed')
-        if not result.get('ok') and result.get('status') == 'conflict':
-            refreshed, _ = self._capture_native_snapshot(
-                world, int(x), int(y), int(z), 'RollbackRecovery',
-                'rollback_recovery_conflict', store=False,
-            )
-            if refreshed is not None:
-                patch = self.blockdata._empty_patch(refreshed)
-                patch['inventory_updates'] = {chosen_slot: desired}
-                result = self.blockdata.apply(self.server, patch, 'force')
-        if not result.get('ok'):
-            self.logger.warning(
-                f"[Rollback Recovery] Could not prepare destination at {x},{y},{z}: "
-                f"{result.get('message', result)}"
-            )
+        if not 0 <= preferred < self.blockdata.container_capacity(current):
             return False, None
-
-        verified, _ = self._capture_native_snapshot(
-            world, int(x), int(y), int(z), 'RollbackRecovery',
-            'rollback_recovery_verified', store=False,
+        existing = self.blockdata.inventory_map(current).get(preferred)
+        ready = bool(
+            existing and self._same_canonical_item(existing, item)
+            and self.blockdata.item_count(existing) >= max(1, self.blockdata.item_count(item))
         )
-        restored = self.blockdata.inventory_map(verified).get(chosen_slot) if verified else None
-        return bool(restored and self._same_canonical_item(restored, desired)), chosen_slot
+        return ready, preferred if ready else None
+
+    def _rollback_cancelled(self, rollback_id):
+        return self._shutting_down or rollback_id in self._cancelled_rollbacks
+
+    def _cancel_rollbacks(self, selection='all', actor_name='Console'):
+        """Cancel durable recovery rows and invalidate this session's delayed work."""
+        selection = str(selection).strip().casefold()
+        if not selection:
+            raise ValueError('Use /agstop, /agstop all, or /agstop <recovery ID>.')
+        now = now_est().isoformat()
+        with sqlite3.connect(DB_FILE) as db:
+            known = set(self._active_rollbacks)
+            known.update(str(row[0]) for row in db.execute(
+                "SELECT DISTINCT rollback_id FROM pending_confiscations "
+                "WHERE status='pending' AND rollback_id IS NOT NULL"
+            ))
+            known.update(str(row[0]) for row in db.execute(
+                "SELECT rollback_id FROM grief_reports WHERE status='processing'"
+            ))
+            selected = known if selection == 'all' else {
+                value for value in known if value.casefold().startswith(selection)
+            }
+            if selection != 'all' and len(selected) > 1:
+                raise ValueError('Recovery ID is ambiguous; use a longer ID.')
+            cancelled_rows = 0
+            for rollback_id in selected:
+                result = db.execute(
+                    "UPDATE pending_confiscations SET status='cancelled',updated_at=? "
+                    "WHERE rollback_id=? AND status='pending'", (now, rollback_id),
+                )
+                cancelled_rows += result.rowcount
+                row = db.execute(
+                    'SELECT report_json FROM grief_reports WHERE rollback_id=?',
+                    (rollback_id,),
+                ).fetchone()
+                if row:
+                    # A damaged report must not prevent emergency cancellation.
+                    serialized = row[0]
+                    try:
+                        report = json.loads(serialized)
+                        if isinstance(report, dict) and isinstance(report.get('rollback', {}), dict):
+                            report['status'] = 'cancelled'
+                            report['completed_at'] = now
+                            report.setdefault('rollback', {})['cancellation'] = {
+                                'cancelled_at': now, 'cancelled_by': str(actor_name),
+                                'pending_rows_cancelled': result.rowcount,
+                            }
+                            serialized = json.dumps(report, ensure_ascii=True, separators=(',', ':'))
+                    except (TypeError, ValueError):
+                        pass
+                    db.execute(
+                        'UPDATE grief_reports SET status=?,completed_at=?,report_json=? '
+                        'WHERE rollback_id=?',
+                        ('cancelled', now, serialized, rollback_id),
+                    )
+            db.commit()
+        self._cancelled_rollbacks.update(selected)
+        self._active_rollbacks.difference_update(selected)
+        self._recovery_warning_times = {
+            key: value for key, value in self._recovery_warning_times.items()
+            if key[0] not in selected
+        }
+        for rollback_id in selected:
+            try:
+                self._refresh_grief_report_recovery(rollback_id)
+            except Exception as error:
+                self.logger.warning(f'[GriefReport] Could not refresh cancelled rollback {rollback_id}: {error}')
+        self.logger.info(
+            f'[Rollback] {actor_name} cancelled {len(selected)} rollback(s) '
+            f'and {cancelled_rows} pending recovery row(s)'
+        )
+        return len(selected), cancelled_rows
 
     def _remove_canonical_item_from_player(self, player, expected_item, amount):
         remaining = max(0, int(amount))
@@ -1494,6 +1529,8 @@ class AntiGriefPlugin(Plugin):
             row_id, item_json, requested, already_removed, owner_name, reason,
             world, x, y, z, destination_slot, row_rollback_id, returned_amount,
         ) in rows:
+            if self._rollback_cancelled(row_rollback_id):
+                continue
             try:
                 item = json.loads(item_json)
             except Exception:
@@ -1506,10 +1543,16 @@ class AntiGriefPlugin(Plugin):
                 world, x, y, z, item, destination_slot
             )
             if not destination_ready:
-                self.logger.warning(
-                    f"[Rollback Recovery] Waiting for destination container at {x},{y},{z} "
-                    f"before touching {player_name}'s inventory"
-                )
+                warning_key = (str(row_rollback_id), str(world), int(x), int(y), int(z))
+                now = tm.monotonic()
+                previous = self._recovery_warning_times.get(warning_key)
+                if previous is None or now - previous >= 60:
+                    self._recovery_warning_times[warning_key] = now
+                    self.logger.warning(
+                        f"[Rollback Recovery] Waiting for verified destination at {x},{y},{z} "
+                        f"in {world}; inventories unchanged. "
+                        f"Cancel with /agstop {str(row_rollback_id)[:8]}"
+                    )
                 continue
 
             removed = self._remove_canonical_item_from_player(player, item, remaining)
@@ -1909,11 +1952,15 @@ class AntiGriefPlugin(Plugin):
             )
             return False
 
-    def _schedule_native_restore(self, saved_snapshot, dimension, x, y, z, actor_name="Rollback"):
-        """Restore after the recreated block actor exists, retrying short startup races."""
+    def _schedule_native_restore(
+        self, saved_snapshot, dimension, x, y, z, actor_name="Rollback", rollback_id=None,
+    ):
+        """Wait for the block actor, then attempt its inventory restore only once."""
         attempts = {'count': 0}
 
         def restore_task():
+            if self._rollback_cancelled(rollback_id):
+                return
             attempts['count'] += 1
             current, _ = self._capture_native_snapshot(
                 dimension, x, y, z, actor_name, 'rollback_actor_ready_check', store=False
@@ -1926,8 +1973,9 @@ class AntiGriefPlugin(Plugin):
                     return
                 self.logger.warning(
                     f"[Rollback] Container restore attempt {attempts['count']} did not verify "
-                    f"at {x},{y},{z}; retrying"
+                    f"at {x},{y},{z}; stopped to avoid replaying a possible inventory write"
                 )
+                return
             if attempts['count'] >= 10:
                 self.logger.warning(
                     f"[Rollback] Container restore did not verify at {x},{y},{z} "
@@ -1948,7 +1996,8 @@ class AntiGriefPlugin(Plugin):
             self.server.scheduler.run_task(self, restore_task, delay=2)
         except Exception as error:
             self.logger.warning(f"[Rollback] Scheduler unavailable, restoring immediately: {error}")
-            self._restore_native_snapshot(saved_snapshot, dimension, x, y, z, actor_name)
+            if not self._rollback_cancelled(rollback_id):
+                self._restore_native_snapshot(saved_snapshot, dimension, x, y, z, actor_name)
 
     # ========================================================================
     # GUI METHODS
@@ -2220,6 +2269,20 @@ class AntiGriefPlugin(Plugin):
 
     def on_command(self, sender: CommandSender, command: Command, args: list[str]) -> bool:
         cmd = command.name.lower()
+
+        if cmd == "agstop":
+            selection = str(args[0]) if args else 'all'
+            try:
+                batches, rows = self._cancel_rollbacks(selection, sender.name)
+            except (ValueError, sqlite3.Error) as error:
+                sender.send_message(f'{ColorFormat.RED}Could not cancel rollback: {error}')
+                return True
+            sender.send_message(
+                f'{ColorFormat.GREEN}Cancelled {batches} rollback(s) and {rows} pending '
+                'item recovery row(s). Already applied changes remain in place.'
+                if batches else f'{ColorFormat.YELLOW}No pending rollback matches {selection}.'
+            )
+            return True
 
         # /aghelp - Show help
         if cmd == "aghelp":
@@ -2616,6 +2679,7 @@ class AntiGriefPlugin(Plugin):
         sender.send_message(f'{ColorFormat.YELLOW}/agowner <info|set|trust|untrust|clear> <x y z> [player] - Container ownership')
         sender.send_message(f'{ColorFormat.YELLOW}/agconfiscate <player> - Retry a pending rollback recovery')
         sender.send_message(f'{ColorFormat.YELLOW}/agback <hours> <x y z> <radius> [player] - Rollback changes')
+        sender.send_message(f'{ColorFormat.YELLOW}/agstop [all|recovery ID] - Cancel pending rollback work and recovery')
         sender.send_message(f'{ColorFormat.YELLOW}/ago [player] - View player inventory')
         sender.send_message(f'{ColorFormat.YELLOW}/agban <player> [reason] - Ban a player')
         sender.send_message(f'{ColorFormat.YELLOW}/agunban <player> - Unban a player')
@@ -3186,7 +3250,7 @@ class AntiGriefPlugin(Plugin):
                 int(verification.get('failed_blocks') or 0)
                 or int(verification.get('failed_containers') or 0)
             )
-            if status != 'processing':
+            if status not in {'processing', 'cancelled'}:
                 if has_failures:
                     status = 'completed_with_failures'
                 elif recovery['pending_rows']:
@@ -3320,8 +3384,11 @@ class AntiGriefPlugin(Plugin):
 
     def _schedule_grief_report_finalize(self, report_id, rollback_id, targets):
         def finalize():
+            if self._rollback_cancelled(rollback_id):
+                return
             try:
                 self._finalize_grief_report(report_id, rollback_id, targets)
+                self._active_rollbacks.discard(rollback_id)
             except Exception as error:
                 self.logger.warning(
                     f"[GriefReport] Could not finalize {report_id}: {error}"
@@ -3348,6 +3415,8 @@ class AntiGriefPlugin(Plugin):
         block changes. Every attempt therefore verifies the live type through
         BlockData before deciding that placement actually failed.
         """
+        if self._rollback_cancelled(target.get('rollback_id')):
+            return False
         dimension = target['dimension']
         bx, by, bz = target['x'], target['y'], target['z']
         block_type = target['block_type']
@@ -3404,6 +3473,8 @@ class AntiGriefPlugin(Plugin):
 
     def _queue_post_block_restore(self, target):
         """Restore container contents only after its block placement is verified."""
+        if self._rollback_cancelled(target.get('rollback_id')):
+            return False
         snapshot = target.get('saved_snapshot')
         if snapshot and self.blockdata.is_container(snapshot):
             self._schedule_native_restore(
@@ -3413,6 +3484,7 @@ class AntiGriefPlugin(Plugin):
                 target['y'],
                 target['z'],
                 target['actor_name'],
+                rollback_id=target.get('rollback_id'),
             )
             return True
 
@@ -3436,6 +3508,8 @@ class AntiGriefPlugin(Plugin):
         attempts = {'count': 0}
 
         def retry_task():
+            if self._rollback_cancelled(target.get('rollback_id')):
+                return
             attempts['count'] += 1
             if self._attempt_rollback_block(target):
                 self.logger.info(
@@ -3585,6 +3659,7 @@ class AntiGriefPlugin(Plugin):
                 continue
 
             target = {
+                'rollback_id': rollback_id,
                 'row_id': row_id,
                 'actor_name': actor_name,
                 'action': action,
@@ -3606,6 +3681,7 @@ class AntiGriefPlugin(Plugin):
             rows, targets,
         )
         report_id = self._store_grief_report(report)
+        self._active_rollbacks.add(rollback_id)
         self.logger.info(
             f"[GriefReport] Created {report_id} for rollback {rollback_id} "
             f"with {len(rows)} evidence event(s)"
@@ -3715,17 +3791,16 @@ class AntiGriefPlugin(Plugin):
             )
             target = targets_by_position.get(position_key)
             target_snapshot = (target or {}).get('saved_snapshot')
+            if not target_snapshot or not (target or {}).get('is_container'):
+                continue
             target_item = self.blockdata.inventory_map(target_snapshot).get(
                 int(candidate['slot']) if candidate['slot'] is not None else -1
-            ) if target_snapshot else None
-            if target_snapshot is not None:
-                budget = (
-                    self.blockdata.item_count(target_item)
-                    if target_item and self._same_canonical_item(target_item, candidate['item'])
-                    else 0
-                )
-            else:
-                budget = int(candidate['amount'])
+            )
+            budget = (
+                self.blockdata.item_count(target_item)
+                if target_item and self._same_canonical_item(target_item, candidate['item'])
+                else 0
+            )
             signature_key = (
                 *position_key, candidate['slot'], self._canonical_item_signature(candidate['item'])
             )
@@ -3740,7 +3815,7 @@ class AntiGriefPlugin(Plugin):
             )
             if self._queue_confiscation(
                 candidate['player_name'], candidate.get('owner_name'), candidate['world'],
-                candidate['x'], candidate['y'], candidate['z'], candidate['item'], amount,
+                candidate['x'], candidate['y'], candidate['z'], target_item, amount,
                 f"rollback_recovery:{candidate['reason']}", theft_key=theft_key,
                 destination_slot=candidate['slot'], rollback_id=rollback_id,
             ):
@@ -3748,6 +3823,8 @@ class AntiGriefPlugin(Plugin):
                 affected_players.add(candidate['player_name'])
 
         def run_recovery_batch():
+            if self._rollback_cancelled(rollback_id):
+                return
             for player_name in sorted(affected_players, key=str.casefold):
                 try:
                     self._apply_pending_confiscations(player_name, rollback_id)
@@ -3782,6 +3859,10 @@ class AntiGriefPlugin(Plugin):
             result_msg += f' {ColorFormat.YELLOW}({len(skipped_types)} invalid records skipped)'
             self.logger.warning(f"Rollback skipped records/types: {list(skipped_types)[:5]}")
         sender.send_message(result_msg)
+        sender.send_message(
+            f'{ColorFormat.YELLOW}Stop pending work: /agstop {rollback_id[:8]} '
+            '(or /agstop for all rollbacks).'
+        )
         sender.send_message(
             f'{ColorFormat.AQUA}Grief proof report {report_id} created. '
             f'It will finalize in the AntiGrief WebUI after rollback verification.'

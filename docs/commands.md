@@ -1,6 +1,6 @@
 # 📜 Command Reference
 
-This document provides the complete command reference for **AntiGrief v1.5.18**, organized by administrative role and execution scope.
+This document provides the complete command reference for **AntiGrief v1.5.19**, organized by administrative role and execution scope.
 
 ---
 
@@ -35,6 +35,7 @@ Permission node: `antigrief.command.op`
 | Command | Arguments | Purpose | Description |
 |---|---|---|---|
 | `/agback` | `<hours> <x y z> <radius> [player]` | Coordinated Rollback | Confirms an incident, executes a 3-phase atomic area rollback, queues item recovery, and generates a printable report with SHA-256 evidence hash. |
+| `/agstop` | `[all or recovery ID]` | Stop Rollback | Cancels all pending rollback work by default, or one batch by unique ID prefix. Works from the console and persists recovery cancellation across restarts. Already-applied changes remain. |
 | `/agconfiscate` | `<player>` | Manual Confiscation | Retries item recovery tasks created by a prior `/agback` execution. Cannot create new confiscation accusations without `/agback`. |
 | `/agclean` | `<hours>` | Data Purge | Removes ordinary interaction logs older than the specified hours while strictly preserving immutable grief proof reports. |
 

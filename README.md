@@ -63,6 +63,7 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 | `/density [size:int]` | Find nearby entity-density hotspots | `antigrief.command.op` |
 | `/agcontainer [player:str] [hours:float] [radius:float]` | View container access logs (items taken/added) | `antigrief.command.op` |
 | `/agowner <action:str> [pos:pos] [player:str]` | Set, inspect, trust, or clear a container owner | `antigrief.command.op` |
+| `/agstop [rollback_id:str]` | Cancel all pending rollback work, or one batch by recovery ID | `antigrief.command.op` |
 | `/agconfiscate <player:str>` | Retry item recovery from an administrator-confirmed rollback | `antigrief.command.op` |
 
 ## Compatibility
@@ -73,14 +74,14 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 | Endstone API | `0.11` |
 | Bedrock Dedicated Server | `1.26.45` |
 | Python | `>=3.10` |
-| Plugin release | `v1.5.18` |
+| Plugin release | `v1.5.19` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v1.5.18 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
+gh release download v1.5.19 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
@@ -136,7 +137,7 @@ AntiGrief v1.5.18 fixes repeated SQLite flush failures caused by non-UTF-8 item 
 1. Stop the server.
 2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
 3. Copy the two matching BlockData files into `plugins/`.
-4. Copy `endstone_antigrief-1.5.18-py3-none-any.whl` into `plugins/`.
+4. Copy `endstone_antigrief-1.5.19-py3-none-any.whl` into `plugins/`.
 5. Start the server and verify the console reports `BlockData API connected`.
 6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
@@ -248,6 +249,7 @@ Pass the secret through the `X-Secret-Key` header or the existing `secret` query
 | `/ag` | Query logs | Member |
 | `/ags` | Search logs | OP |
 | `/agback` | Roll back block and container changes | OP |
+| `/agstop` | Cancel pending rollback work and item recovery | OP |
 | `/agcontainer` | View container access changes | OP |
 | `/agclean` | Remove old events and snapshots | OP |
 | `/agban`, `/agunban`, `/agbanlist` | Player bans | OP |
@@ -273,6 +275,10 @@ MIT License. The BlockData API dependency is distributed under its own Apache-2.
 - Removed access to Endstone's native `Plugin.logger` property from the Python constructor.
 - Runtime state and the BlockData adapter are now initialized in `on_load()`, after Endstone attaches the native plugin wrapper.
 - This fixes the Linux SIGSEGV seen in `pybind11::type_caster_base<endstone::Logger>` during `PyPluginLoader::loadPlugins`.
+
+## 1.5.19 recovery hotfix
+
+Recovery retries no longer refill containers. Run `/agstop` (console: `agstop`) to cancel all pending rollback work and saved recovery queues, or `/agstop <recovery ID>` for one batch. Cancellation persists across restarts and leaves already-applied changes in place. See the [rollback guide](docs/rollback-and-recovery.md#stopping-a-rollback-or-recovery-loop) for the upgrade procedure when an older server is already duplicating items.
 
 ## 1.5.18 dependency repair
 

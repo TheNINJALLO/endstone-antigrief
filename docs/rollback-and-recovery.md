@@ -6,6 +6,15 @@ AntiGrief features a high-fidelity **3-Phase Atomic Rollback Engine** controlled
 
 ---
 
+## Stopping a rollback or recovery loop
+
+Run `/agstop` in game as an operator, or `agstop` in the server console, to cancel all pending rollback work and item recovery. `/agstop <recovery ID>` cancels one batch; the eight-character ID displayed by `/agback` works if it is unique. `/agstop all` explicitly selects all batches.
+
+Cancellation stops delayed block placement, container restoration, and item recovery, including queued recovery for offline players and older plugin versions. Cancelled recovery stays cancelled after a restart and cannot be retried by `/agconfiscate`. It does not undo changes already applied or remove items already duplicated. Other logging and inspection continue, and a new `/agback` starts a new batch.
+
+On versions before 1.5.19, stop the server and set `"recover_stolen_items_on_rollback": false` in `plugins/antigrief_data/config.json` to disable the repeating recovery loop. Replace the old AntiGrief wheel with 1.5.19, start the server with recovery still disabled, and run `agstop` in the console. You can then re-enable recovery in the config and restart.
+
+
 ## 🏗️ 3-Phase Atomic Rollback Execution
 
 When `/agback` is executed, AntiGrief isolates the target volume, queries historical block states, and restores the area through three sequential, non-blocking execution phases:
@@ -41,7 +50,7 @@ When container theft is confirmed via `/agback`:
 1. **Snapshots Compared**: Historical container NBT is compared against live container contents to identify stolen items.
 2. **Container Restored**: Target container items are restored to their exact pre-incident slot locations.
 3. **Confiscation Queued**: Stolen items are flagged for recovery from the offender's inventory.
-4. **Verification Safety**: Confiscation occurs ONLY if the destination container was successfully restored and verified. If the destination container is destroyed or unreachable, player inventory is left untouched.
+4. **Verification Safety**: Confiscation occurs ONLY if the destination container was successfully restored and verified. Retries only read the original restored slot; they never refill a container or select another slot. If the original slot is missing, changed, or unreachable, player inventory is left untouched.
 5. **Offline Support**: If the offender is offline during `/agback`, recovery rows remain safely queued in `agdata.db` and process automatically upon the player's next login or via `/agconfiscate`.
 
 ---
@@ -51,7 +60,8 @@ When container theft is confirmed via `/agback`:
 To guarantee server stability and prevent accidental item deletion, AntiGrief enforces strict recovery invariants:
 
 - **No False Accusations**: Container access alone is logged as neutral evidence. Confiscation logic cannot run without `/agback`.
-- **Slot Verification**: Items are placed in target containers before offending player inventories are modified.
+- **Slot Verification**: The placement pass restores the historical inventory. Recovery sweeps only verify it before removing matching player items; they never replenish collected contents.
+- **Bounded Restoration**: Block actor readiness can retry, but an attempted inventory restore is not replayed after uncertain verification. Check failed restores before starting another rollback.
 - **SHA-256 Evidence Hashing**: Every `/agback` execution compiles an immutable report stamped with a SHA-256 cryptographic hash of all involved events, coordinates, and NBT snapshots.
 
 ---

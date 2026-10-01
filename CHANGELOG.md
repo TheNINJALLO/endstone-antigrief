@@ -2,6 +2,13 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## [1.5.19] - 2026-10-01
+
+- Stop recovery sweeps from refilling containers. Recovery now only verifies the original restored slot before removing matching player items, and uses the rollback target count instead of a later event's stack count.
+- Add operator/console command `/agstop [all|recovery ID]` to cancel delayed block/container work and persistently cancel pending recovery, including offline players and queues created by older versions. Applied changes and evidence remain recorded.
+- Group unavailable-destination warnings by rollback/container and limit them to once per minute, with the cancellation command included.
+- Wait for container actors to become ready, but do not replay an attempted inventory restore after uncertain verification.
+
 ## [1.5.18] - 2026-09-27
 
 - Read native provider metadata through Endstone's bound description method so incompatible BlockData versions are rejected before bridge calls. Verified against the real native plugin wrapper.

@@ -30,7 +30,7 @@ def test_container_inventory_waits_for_full_placement_pass():
     assert placement_loop < post_restore_loop < queue_call
 
 
-def test_unverified_container_inventory_is_retried():
+def test_container_restore_reports_unverified_inventory():
     assert "restored = self._restore_native_snapshot" in SOURCE
     assert "Container restore attempt" in SOURCE
     assert "Container restore did not verify" in SOURCE
