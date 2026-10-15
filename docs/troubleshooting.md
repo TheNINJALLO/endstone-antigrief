@@ -14,7 +14,8 @@ This guide provides solutions for common issues, error messages, and operational
 | **`/agback` reports `Container verification mismatch`** | Target container was moved, destroyed, or obscured by newly placed blocks during rollback. | Run `/agstop <recovery ID>` and inspect the target and saved inventory before starting another rollback. The plugin does not replay uncertain inventory writes. |
 | **Repeated recovery warnings or containers refilling after `/agback`** | Older recovery sweeps wrote container contents again on every retry. | Upgrade to 1.5.19 and run `/agstop` to cancel the old queue. Before upgrading, stop the server, disable `recover_stolen_items_on_rollback` in the config, then restart. |
 | **Pending item confiscation not running** | Offending player is offline or has empty slots. | Recovery rows remain safely queued in `agdata.db`. Execute `/agconfiscate <player>` when player logs back on. |
-| **Multiple wheels found error on startup** | Older `endstone_antigrief-*.whl` files left in `plugins/`. | Delete all older AntiGrief wheel files from `plugins/` so only `endstone_antigrief-1.5.19-py3-none-any.whl` remains. |
+| **Container opens appear but item moves are missing** | Older versions only compare the opening and closing state, so moves can cancel out; records also wait for the database flush. | Install 1.5.20, keep `capture_container_open_close` enabled, confirm the BlockData connection, then move items, wait up to 20 seconds, and refresh with the Container filter. Changes within one server tick are recorded as its net committed slot state. |
+| **Multiple wheels found error on startup** | Older `endstone_antigrief-*.whl` files left in `plugins/`. | Delete all older AntiGrief wheel files from `plugins/` so only `endstone_antigrief-1.5.20-py3-none-any.whl` remains. |
 
 ---
 

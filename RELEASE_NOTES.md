@@ -1,9 +1,9 @@
-# AntiGrief 1.5.19
+# AntiGrief 1.5.20
 
-Fix repeated item duplication during pending `/agback` recovery. Recovery retries now verify the original destination slot without writing container contents. Unavailable destinations leave player inventories untouched and log at most once per minute per rollback/container.
+Record committed item additions and removals while a container is open, using inventory transactions and authoritative item-stack responses to trigger native snapshot comparisons on the following server tick. Each change retains exact before/after item NBT and snapshot IDs for the dashboard and rollback. Changes committed in the same server tick are combined into one slot comparison.
 
-Use `/agstop` (or `agstop` in the console) to cancel all pending rollback work and item recovery. Use `/agstop <recovery ID>` to cancel one batch; unique ID prefixes are accepted. Cancellation persists across restarts, covers offline players, and preserves evidence and already-applied changes.
+Prevent delayed close callbacks from consuming a newly opened container's tracking session. Preserve the existing baseline across duplicate interactions, and capture final changes on client/server closes, disconnects, and plugin shutdown. Unchanged or rejected transaction notifications do not create duplicate snapshot rows.
 
-For an existing duplication loop, stop the server and set `"recover_stolen_items_on_rollback": false` in `plugins/antigrief_data/config.json`. Replace the older AntiGrief wheel with the 1.5.19 wheel, start the server, and run `agstop` in the console. Recovery can then be re-enabled in the config with another restart. Existing duplicated items are not automatically removed.
+Replace the older AntiGrief wheel with `endstone_antigrief-1.5.20-py3-none-any.whl` and restart the server, keeping the existing database and configuration. Confirm `capture_container_open_close` is enabled and BlockData connects. After moving items, allow the database writer up to 20 seconds and refresh the dashboard with the Container filter.
 
-Container actor readiness still retries, but an attempted inventory write is no longer replayed after uncertain verification. The release retains the 1.5.18 BlockData dependency fixes. Automated SQLite/inventory/scheduler regression coverage is included; this hotfix has not been tested on a live BDS server.
+Validation: 84 automated tests pass, including 16 new simulated event tests and a transaction-to-SQLite-to-dashboard API regression. Ruff checks pass. This release candidate has not been installed or validated on the Kingdom server or a live BDS/player session. It retains the 1.5.19 recovery duplication fixes and `/agstop` command.

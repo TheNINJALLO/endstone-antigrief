@@ -24,7 +24,7 @@ AntiGrief creates `plugins/antigrief_data/config.json`. Existing files are migra
 | Key | Purpose |
 |---|---|
 | `require_blockdata_api` | Treats BlockData as required for exact functions. |
-| `capture_container_open_close` | Captures before/after container snapshots. |
+| `capture_container_open_close` | Enables opening baselines, committed transaction comparisons, and final container snapshots on close/disconnect. |
 | `store_raw_snbt` | Stores raw SNBT when available. |
 | `blockdata_connect_retry_ticks` | Retry interval if the service registers late. |
 | `blockdata_connect_log_every` | Reduces repeated startup warnings. |

@@ -74,14 +74,14 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 | Endstone API | `0.11` |
 | Bedrock Dedicated Server | `1.26.45` |
 | Python | `>=3.11` |
-| Plugin release | `v1.5.19` |
+| Plugin release | `v1.5.20` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v1.5.19 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
+gh release download v1.5.20 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
@@ -137,7 +137,7 @@ AntiGrief v1.5.18 fixes repeated SQLite flush failures caused by non-UTF-8 item 
 1. Stop the server.
 2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
 3. Copy the two matching BlockData files into `plugins/`.
-4. Copy `endstone_antigrief-1.5.19-py3-none-any.whl` into `plugins/`.
+4. Copy `endstone_antigrief-1.5.20-py3-none-any.whl` into `plugins/`.
 5. Start the server and verify the console reports `BlockData API connected`.
 6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
@@ -185,12 +185,14 @@ Indexes are created for event time, snapshot time, and world position. `/agclean
 
 ## Exact container auditing
 
-When a player opens a supported container, AntiGrief stores a native baseline snapshot. When the container-close packet arrives, it captures another native snapshot and compares exact slots. Logged events include:
+When a player opens a supported container, AntiGrief stores a native baseline snapshot. Inventory transactions and authoritative item-stack responses schedule an exact slot comparison on the next server tick, after BDS commits the change. The baseline advances after each comparison, so adds and takes across successive ticks remain separate records even if the final inventory matches its opening state. Notifications in the same tick are combined into one comparison of the committed state; this does not reconstruct every intermediate transfer within that tick. Client and server closes, disconnects, and plugin shutdown capture any remaining changes. Logged events include:
 
 - `Container Add`
 - `Container Take`
 - `Container Change`
 - `Container NBT Change` for non-inventory actor metadata such as custom names or locks
+
+The database writer flushes buffered records every 20 seconds. Refresh the WebUI after that interval and select the **Container** action filter to see item changes. Tracking requires `capture_container_open_close` to remain enabled; full item NBT requires a connected BlockData provider. The 1.5.20 event/persistence/dashboard regression suite runs without BDS; validation against a live player session is still pending.
 
 Slot changes contain the slot, amount, full before item, full after item, revisions, and links to the before/after complete snapshots. Metadata changes include the before/after canonical actor NBT with inventory and coordinate fields removed for a clean comparison.
 
