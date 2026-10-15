@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import errno
 from contextlib import contextmanager
 import json
 import os
@@ -96,16 +97,23 @@ def browser(tmp_path_factory):
             yield instance
             instance.command('Browser.close')
     finally:
-        if process.poll() is None:
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
             process.terminate()
-        process.wait(timeout=15)
+            process.wait(timeout=10)
         # This is a newly created, isolated test profile, never the user's browser profile.
         assert profile.is_relative_to(tmp_path_factory.getbasetemp().resolve())
-        for _ in range(20):
+        for attempt in range(50):
             try:
                 shutil.rmtree(profile)
                 break
-            except PermissionError:
+            except FileNotFoundError:
+                if not profile.exists():
+                    break
+            except OSError as error:
+                if error.errno not in (errno.ENOTEMPTY, errno.EACCES, errno.EPERM) or attempt == 49:
+                    raise
                 time.sleep(0.1)
 
 
