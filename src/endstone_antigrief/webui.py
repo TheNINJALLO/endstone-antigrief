@@ -325,7 +325,7 @@ def create_app():
     app = FastAPI(
         title="AntiGrief WebUI",
         description="Player Behavior Logging Dashboard",
-        version="1.5.18"
+        version="1.5.20"
     )
 
     app.add_middleware(
@@ -502,15 +502,15 @@ def create_app():
 
     @app.get("/api/logs")
     async def get_logs(
-        hours: float = Query(24, description="Hours to look back"),
-        x: Optional[float] = Query(None, description="X coordinate center"),
-        y: Optional[float] = Query(None, description="Y coordinate center"),
-        z: Optional[float] = Query(None, description="Z coordinate center"),
-        radius: Optional[float] = Query(None, description="Search radius"),
+        hours: float = Query(24, gt=0, allow_inf_nan=False, description="Hours to look back"),
+        x: Optional[float] = Query(None, allow_inf_nan=False, description="X coordinate center"),
+        y: Optional[float] = Query(None, allow_inf_nan=False, description="Y coordinate center"),
+        z: Optional[float] = Query(None, allow_inf_nan=False, description="Z coordinate center"),
+        radius: Optional[float] = Query(None, ge=0, allow_inf_nan=False, description="Search radius"),
         player: Optional[str] = Query(None, description="Player name filter"),
         action: Optional[str] = Query(None, description="Action type filter"),
-        limit: int = Query(100, description="Results per page"),
-        offset: int = Query(0, description="Result offset for pagination"),
+        limit: int = Query(100, ge=1, description="Results per page"),
+        offset: int = Query(0, ge=0, description="Result offset for pagination"),
         _: bool = Depends(verify_secret)
     ):
         """Retrieve logs with optional filters and pagination"""
@@ -522,10 +522,12 @@ def create_app():
         where_clause = "WHERE time >= ?"
         params = [time_threshold.isoformat()]
 
-        if x is not None and y is not None and z is not None and radius:
+        if x is not None and y is not None and z is not None and radius is not None:
             where_clause += " AND (x - ?)*(x - ?) + (y - ?)*(y - ?) + (z - ?)*(z - ?) <= ?"
             params.extend([x, x, y, y, z, z, radius ** 2])
 
+        player = player.strip() if player else ''
+        action = action.strip() if action else ''
         if player:
             where_clause += " AND name LIKE ?"
             params.append(f"%{player}%")
@@ -1808,8 +1810,8 @@ def get_dashboard_html():
             </div>
             <div class="header-right">
                 <div class="status-badge">
-                    <div class="status-dot"></div>
-                    <span>MONITORING</span>
+                    <div class="status-dot" id="dashboard-status-dot"></div>
+                    <span id="dashboard-status">CONNECTING</span>
                 </div>
                 <button class="btn btn-primary" onclick="refreshData(true)">⟳ REFRESH</button>
             </div>
@@ -1834,7 +1836,7 @@ def get_dashboard_html():
             </div>
         </div>
 
-        <div class="filters">
+        <form class="filters" id="filters-form">
             <div class="filter-group">
                 <label>Time Range (hrs)</label>
                 <input type="number" id="filter-hours" value="24" min="1" max="720">
@@ -1861,9 +1863,9 @@ def get_dashboard_html():
             </div>
             <div class="filter-group">
                 <label>&nbsp;</label>
-                <button class="btn btn-primary" onclick="refreshData(true)">APPLY</button>
+                <button class="btn btn-primary" type="submit">APPLY</button>
             </div>
-        </div>
+        </form>
 
         <div class="reports-section" id="player-inventory-section">
             <div class="logs-header">
@@ -1957,12 +1959,55 @@ def get_dashboard_html():
         let perPage = 100;
         let currentNbtPayload = null;
         let currentNbtMode = 'container';
+        let refreshRequestId = 0;
+
+        function apiUrl(path, params = {}) {
+            const base = new URL(window.location.href);
+            base.search = '';
+            base.hash = '';
+            if (!base.pathname.endsWith('/')) base.pathname += '/';
+            const url = new URL(path.replace(/^\\//, ''), base);
+            Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
+            return url.pathname + url.search;
+        }
+
+        function apiFetch(path, params = {}) {
+            return fetch(apiUrl(path, params), { headers: { 'X-Secret-Key': secretKey } });
+        }
+
+        function showLogsMessage(message, error = false) {
+            const body = document.getElementById('logs-body');
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 6;
+            cell.style.cssText = 'text-align:center;padding:2rem;color:var(--text-muted)';
+            if (error) {
+                cell.style.color = 'var(--accent-red)';
+                cell.setAttribute('role', 'alert');
+            }
+            cell.textContent = message;
+            row.appendChild(cell);
+            body.replaceChildren(row);
+        }
+
+        function setDashboardStatus(label, failed = false) {
+            document.getElementById('dashboard-status').textContent = label;
+            const color = failed ? 'var(--accent-red)' : 'var(--accent-green)';
+            const dot = document.getElementById('dashboard-status-dot');
+            dot.style.background = color;
+            dot.style.boxShadow = '0 0 8px ' + color;
+        }
+
+        document.getElementById('filters-form').addEventListener('submit', event => {
+            event.preventDefault();
+            refreshData(true);
+        });
 
         function login() {
             const input = document.getElementById('secret-input');
             secretKey = input.value;
 
-            fetch(`/api/stats?hours=24&secret=${secretKey}`)
+            apiFetch('api/stats', { hours: 24 })
                 .then(res => {
                     if (res.ok) {
                         document.getElementById('login-overlay').classList.add('hidden');
@@ -1978,43 +2023,59 @@ def get_dashboard_html():
         }
 
         async function refreshData(resetPage) {
+            const requestId = ++refreshRequestId;
             if (resetPage) currentPage = 1;
-            const hours = document.getElementById('filter-hours').value || 24;
-            const player = document.getElementById('filter-player').value;
+            const hours = Number(document.getElementById('filter-hours').value || 24);
+            const player = document.getElementById('filter-player').value.trim();
             const action = document.getElementById('filter-action').value;
             const coords = document.getElementById('filter-coords').value.trim();
             const offset = (currentPage - 1) * perPage;
 
-            let logsUrl = `/api/logs?hours=${hours}&limit=${perPage}&offset=${offset}&secret=${secretKey}`;
-            if (player) logsUrl += `&player=${encodeURIComponent(player)}`;
-            if (action) logsUrl += `&action=${encodeURIComponent(action)}`;
+            const params = { hours, limit: perPage, offset };
+            if (player) params.player = player;
+            if (action) params.action = action;
+            let validationError = '';
+            if (!Number.isFinite(hours) || hours <= 0) validationError = 'Enter a positive time range in hours.';
             if (coords) {
-                const parts = coords.split(/\\s+/);
-                if (parts.length >= 4) {
-                    logsUrl += `&x=${parts[0]}&y=${parts[1]}&z=${parts[2]}&radius=${parts[3]}`;
+                const parts = coords.split(/[,\\s]+/).map(Number);
+                if (parts.length !== 4 || !parts.every(Number.isFinite) || parts[3] < 0) {
+                    validationError = 'Enter four numbers for the area: X Y Z and a non-negative radius.';
+                } else {
+                    [params.x, params.y, params.z, params.radius] = parts;
                 }
             }
+            if (validationError) {
+                setDashboardStatus('CHECK FILTERS', true);
+                showLogsMessage(validationError, true);
+                document.getElementById('log-count').textContent = 'Check search filters';
+                return;
+            }
+            showLogsMessage('Loading events...');
+            setDashboardStatus('LOADING');
+            document.getElementById('log-count').textContent = 'Loading...';
 
             loadGriefReports();
             loadPlayerInventories();
 
-            // Fetch stats
-            try {
-                const statsRes = await fetch(`/api/stats?hours=${hours}&secret=${secretKey}`);
-                const stats = await statsRes.json();
-
+            // Statistics must not delay or prevent the event search.
+            apiFetch('api/stats', { hours }).then(async response => {
+                if (!response.ok) throw new Error(`Stats request failed (HTTP ${response.status})`);
+                const stats = await response.json();
+                if (requestId !== refreshRequestId) return;
                 document.getElementById('stat-total').textContent = stats.total_events.toLocaleString();
                 document.getElementById('stat-players').textContent = stats.unique_players.toLocaleString();
                 document.getElementById('stat-breaks').textContent = (stats.actions['Break'] || 0).toLocaleString();
                 document.getElementById('stat-places').textContent = (stats.actions['Place'] || 0).toLocaleString();
-            } catch (e) {
-                console.error('Stats fetch error:', e);
-            }
+            }).catch(error => console.error('Stats fetch error:', error));
 
             // Fetch logs
             try {
-                const logsRes = await fetch(logsUrl);
+                const logsRes = await apiFetch('api/logs', params);
+                if (!logsRes.ok) throw new Error(`HTTP ${logsRes.status}`);
                 const data = await logsRes.json();
+                if (requestId !== refreshRequestId) return;
+                if (!Array.isArray(data.logs)) throw new Error('Invalid event response');
+                setDashboardStatus('CONNECTED');
 
                 // Update pagination state
                 const tc = data.total_count || 0;
@@ -2055,8 +2116,14 @@ def get_dashboard_html():
                         '<td>' + nbtButton + '</td>' +
                     '</tr>';
                 }).join('');
-            } catch (e) {
-                console.error('Logs fetch error:', e);
+            } catch (error) {
+                if (requestId !== refreshRequestId) return;
+                setDashboardStatus('SEARCH FAILED', true);
+                showLogsMessage(`Could not load events (${error.message}). Check the connection and access key, then retry.`, true);
+                document.getElementById('log-count').textContent = 'Search failed';
+                totalPages = 1;
+                currentPage = 1;
+                updatePagination();
             }
         }
 
@@ -2081,9 +2148,9 @@ def get_dashboard_html():
                 // Resolve through the interaction first. That endpoint can use the
                 // indexed snapshot, a nearby snapshot, or the inline destructive-event
                 // backup when a snapshot-table row is unavailable.
-                let response = await fetch(`/api/logs/${logId}/blockdata?secret=${encodeURIComponent(secretKey)}`);
+                let response = await apiFetch(`api/logs/${logId}/blockdata`);
                 if (!response.ok && snapshotId) {
-                    response = await fetch(`/api/container-snapshots/${encodeURIComponent(snapshotId)}?secret=${encodeURIComponent(secretKey)}`);
+                    response = await apiFetch(`api/container-snapshots/${encodeURIComponent(snapshotId)}`);
                 }
                 if (!response.ok) throw new Error(`BlockData request failed (${response.status})`);
                 const payload = await response.json();
@@ -2321,10 +2388,10 @@ def get_dashboard_html():
         async function loadPlayerInventories() {
             const body = document.getElementById('player-inventory-body');
             const playerFilter = document.getElementById('filter-player').value.trim();
-            let url = `/api/player-inventories?limit=200&secret=${encodeURIComponent(secretKey)}`;
-            if (playerFilter) url += `&player=${encodeURIComponent(playerFilter)}`;
+            const params = { limit: 200 };
+            if (playerFilter) params.player = playerFilter;
             try {
-                const response = await fetch(url);
+                const response = await apiFetch('api/player-inventories', params);
                 if (!response.ok) throw new Error('Player inventory request failed');
                 const payload = await response.json();
                 const players = Array.isArray(payload.players) ? payload.players : [];
@@ -2364,7 +2431,7 @@ def get_dashboard_html():
             setNbtMode('player');
             content.textContent = 'Loading live player inventory snapshot...';
             try {
-                const response = await fetch(`/api/player-inventories/${encodeURIComponent(playerKey)}?secret=${encodeURIComponent(secretKey)}`);
+                const response = await apiFetch(`api/player-inventories/${encodeURIComponent(playerKey)}`);
                 if (!response.ok) throw new Error(`Player inventory request failed (${response.status})`);
                 const payload = await response.json();
                 currentNbtPayload = payload;
@@ -2422,7 +2489,7 @@ def get_dashboard_html():
         async function loadGriefReports() {
             const body = document.getElementById('reports-body');
             try {
-                const response = await fetch(`/api/grief-reports?limit=25&secret=${encodeURIComponent(secretKey)}`);
+                const response = await apiFetch('api/grief-reports', { limit: 25 });
                 if (!response.ok) throw new Error('Report request failed');
                 const payload = await response.json();
                 const reports = Array.isArray(payload.reports) ? payload.reports : [];
@@ -2451,7 +2518,7 @@ def get_dashboard_html():
         }
 
         function openGriefReport(reportId) {
-            const url = `/reports/${encodeURIComponent(reportId)}?secret=${encodeURIComponent(secretKey)}`;
+            const url = apiUrl(`reports/${encodeURIComponent(reportId)}`, { secret: secretKey });
             window.open(url, '_blank', 'noopener');
         }
 

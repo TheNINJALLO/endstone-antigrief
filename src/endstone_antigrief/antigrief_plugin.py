@@ -1,5 +1,5 @@
 """
-AntiGrief Plugin v1.5.19 - BlockData Edition
+AntiGrief Plugin v1.5.20 - BlockData Edition
 Player behavior logging, analysis, and WebUI dashboard for Endstone
 """
 
@@ -9,7 +9,7 @@ from endstone import ColorFormat, Player
 from endstone.event import (
     event_handler, BlockBreakEvent, PlayerInteractEvent, ActorKnockbackEvent,
     BlockPlaceEvent, PlayerCommandEvent, PlayerJoinEvent, PlayerQuitEvent, PlayerChatEvent,
-    ActorExplodeEvent, PacketReceiveEvent, ScriptMessageEvent
+    ActorExplodeEvent, EventPriority, PacketReceiveEvent, PacketSendEvent, ScriptMessageEvent
 )
 from endstone.form import ModalForm, Dropdown, ActionForm, TextInput
 from endstone.nbt import (
@@ -60,7 +60,7 @@ def now_est():
 # CONFIGURATION
 # ============================================================================
 
-PLUGIN_VERSION = "v1.5.19"
+PLUGIN_VERSION = "v1.5.20"
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -161,6 +161,11 @@ CONTAINER_BLOCKS = {
     "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
     "minecraft:hopper", "minecraft:dropper", "minecraft:dispenser",
     "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker",
+    "minecraft:lit_furnace", "minecraft:lit_blast_furnace", "minecraft:lit_smoker",
+    "minecraft:copper_chest", "minecraft:exposed_copper_chest",
+    "minecraft:weathered_copper_chest", "minecraft:oxidized_copper_chest",
+    "minecraft:waxed_copper_chest", "minecraft:waxed_exposed_copper_chest",
+    "minecraft:waxed_weathered_copper_chest", "minecraft:waxed_oxidized_copper_chest",
     "minecraft:brewing_stand", "minecraft:chiseled_bookshelf",
     "minecraft:crafter", "minecraft:decorated_pot", "minecraft:shulker_box",
     "minecraft:white_shulker_box", "minecraft:orange_shulker_box",
@@ -693,7 +698,7 @@ writer_thread.start()
 
 class AntiGriefPlugin(Plugin):
     api_version = "0.11"
-    version = "1.5.19"
+    version = "1.5.20"
     depend = ["blockdata_api"]
 
     # Command definitions with English descriptions
@@ -945,6 +950,12 @@ class AntiGriefPlugin(Plugin):
     def on_disable(self) -> None:
         self._shutting_down = True
         self._blockdata_retry_scheduled = False
+        for player_name in list(container_snapshots):
+            try:
+                self._diff_player_inventory(player_name)
+            except Exception as error:
+                self.logger.warning(f"[Container] Shutdown diff error for {player_name}: {error}")
+        container_snapshots.clear()
         flush_data_to_db()
         try:
             self.server.scheduler.cancel_tasks(self)
@@ -1134,7 +1145,10 @@ class AntiGriefPlugin(Plugin):
             value = value.split(".")[-1]
         if value and ":" not in value:
             value = "minecraft:" + value
-        return value in CONTAINER_BLOCKS or value.endswith("_shulker_box")
+        return (
+            value in CONTAINER_BLOCKS or value.endswith("_shulker_box")
+            or (value.startswith("minecraft:") and value.endswith("_shelf"))
+        )
 
     def _set_container_owner(self, world, x, y, z, owner_name, source="placement"):
         if not CONTAINER_OWNERSHIP_ENABLED or not owner_name:
@@ -4020,20 +4034,23 @@ class AntiGriefPlugin(Plugin):
             self.logger.warning(f"[Container] Player inventory snapshot failed for {player_name}: {e}")
             return None
 
-    def _diff_player_inventory(self, player_name):
-        """Compare exact native container snapshots when the UI closes."""
+    def _diff_player_inventory(self, player_name, *, close=True):
+        """Record committed slot changes, retaining the baseline while the UI is open."""
         if player_name not in container_snapshots:
             return
 
-        tracked = container_snapshots.pop(player_name)
+        tracked = container_snapshots[player_name]
+        if close:
+            container_snapshots.pop(player_name)
         sx, sy, sz = tracked['x'], tracked['y'], tracked['z']
         stype = tracked['block_type']
         dimension = tracked['dimension']
         before_native = tracked.get('blockdata_snapshot')
 
-        if before_native is not None and self._blockdata_ready:
+        if before_native is not None:
             after_native, after_snapshot_id = self._capture_native_snapshot(
-                dimension, sx, sy, sz, player_name, 'container_close', store=True
+                dimension, sx, sy, sz, player_name,
+                'container_close' if close else 'container_transaction', store=False
             )
             if after_native is None:
                 return
@@ -4051,6 +4068,19 @@ class AntiGriefPlugin(Plugin):
                 for key in ('Items', 'items', 'x', 'y', 'z'):
                     value.pop(key, None)
                 return value
+
+            before_metadata = actor_metadata(before_entity)
+            after_metadata = actor_metadata(after_entity)
+            metadata_changed = before_metadata != after_metadata
+            # Rejected requests and duplicate packet notifications must not fill
+            # SQLite with identical snapshots while a container is open.
+            if changes or metadata_changed or close:
+                after_snapshot_id = self._queue_container_snapshot(
+                    after_native, player_name,
+                    'container_close' if close else 'container_transaction', event_time
+                )
+            else:
+                after_snapshot_id = before_snapshot_id
 
             for change in changes:
                 item = change.get('after') or change.get('before') or {}
@@ -4087,9 +4117,6 @@ class AntiGriefPlugin(Plugin):
                     ),
                 })
 
-            before_metadata = actor_metadata(before_entity)
-            after_metadata = actor_metadata(after_entity)
-            metadata_changed = before_metadata != after_metadata
             if metadata_changed:
                 data_buffers['container_access'].append({
                     'name': player_name,
@@ -4120,6 +4147,9 @@ class AntiGriefPlugin(Plugin):
                     f"[Container] {player_name}: {len(changes)} exact slot changes, "
                     f"metadata_changed={metadata_changed} at {sx},{sy},{sz} ({stype})"
                 )
+            if not close:
+                tracked['blockdata_snapshot'] = after_native
+                tracked['snapshot_id'] = after_snapshot_id
             return
 
         # Legacy fallback when no native baseline was available.
@@ -4129,6 +4159,8 @@ class AntiGriefPlugin(Plugin):
         new_snapshot = self._snapshot_player_inventory(player_name)
         if new_snapshot is None:
             return
+        if not close:
+            tracked['snapshot'] = new_snapshot
         all_items = set(old_snapshot) | set(new_snapshot)
         changes = 0
         for item_type in all_items:
@@ -4159,11 +4191,41 @@ class AntiGriefPlugin(Plugin):
                 f"at {sx},{sy},{sz} ({stype})"
             )
 
-    @event_handler
+    def _queue_container_capture(self, player_name, *, close=False):
+        """Coalesce packet notifications and capture BDS state on the next server tick."""
+        if self._shutting_down or not CAPTURE_CONTAINER_OPEN_CLOSE:
+            return
+        tracked = container_snapshots.get(player_name)
+        if tracked is None:
+            return
+        if close:
+            tracked['closing'] = True
+        if tracked.get('capture_pending'):
+            return
+        tracked['capture_pending'] = True
+
+        def capture_committed_changes():
+            tracked['capture_pending'] = False
+            # A close from the previous window must never consume a newly opened
+            # container, even when both callbacks fall in the same server tick.
+            if self._shutting_down or container_snapshots.get(player_name) is not tracked:
+                return
+            try:
+                self._diff_player_inventory(player_name, close=bool(tracked.get('closing')))
+            except Exception as error:
+                self.logger.warning(f"[Container] Transaction diff error for {player_name}: {error}")
+
+        try:
+            self.server.scheduler.run_task(self, capture_committed_changes, delay=1)
+        except Exception as error:
+            tracked['capture_pending'] = False
+            self.logger.warning(f"[Container] Could not schedule capture for {player_name}: {error}")
+
+    @event_handler(priority=EventPriority.MONITOR, ignore_cancelled=True)
     def on_packet_receive(self, event: PacketReceiveEvent):
-        """Intercept ContainerClose packets to detect when a player closes a container UI."""
-        # ContainerClose packet id = 47
-        if event.packet_id != 47:
+        """Observe legacy transactions, stack requests, and client container closes."""
+        # InventoryTransaction=30, ContainerClose=47, ItemStackRequest=147.
+        if event.packet_id not in (30, 47, 147):
             return
 
         # Extract the player name (primitive) immediately to avoid stale proxy later
@@ -4175,21 +4237,22 @@ class AntiGriefPlugin(Plugin):
         except (RuntimeError, SystemError, OSError):
             return  # Stale proxy — player already disconnected
 
-        def capture_after_close():
-            try:
-                self._diff_player_inventory(player_name)
-            except Exception as error:
-                self.logger.warning(
-                    f"[Container] Close diff error for {player_name}: {error}"
-                )
-                container_snapshots.pop(player_name, None)
+        self._queue_container_capture(player_name, close=event.packet_id == 47)
 
-        # PacketReceiveEvent can arrive before the inventory transaction is fully
-        # committed. Capture one server tick later to get the authoritative state.
+    @event_handler(priority=EventPriority.MONITOR, ignore_cancelled=True)
+    def on_packet_send(self, event: PacketSendEvent):
+        """Cover authoritative stack responses and server-initiated container closes."""
+        # ItemStackResponse also covers requests embedded in PlayerAuthInput.
+        if event.packet_id not in (47, 148):
+            return
         try:
-            self.server.scheduler.run_task(self, capture_after_close, delay=1)
-        except Exception:
-            capture_after_close()
+            player = event.player
+            if player is None:
+                return
+            player_name = str(player.name)
+        except (RuntimeError, SystemError, OSError):
+            return
+        self._queue_container_capture(player_name, close=event.packet_id == 47)
 
     @event_handler
     def on_player_interact(self, event: PlayerInteractEvent):
@@ -4238,7 +4301,57 @@ class AntiGriefPlugin(Plugin):
                 )
 
         # Capture the actual container actor, every occupied slot, and canonical NBT.
-        if self._is_container_block_type(block_type_str) and CAPTURE_CONTAINER_OPEN_CLOSE:
+        if (self._is_container_block_type(block_type_str) and CAPTURE_CONTAINER_OPEN_CLOSE
+                and not event.is_cancelled
+                and event.action == PlayerInteractEvent.RIGHT_CLICK_BLOCK):
+            tracked = container_snapshots.get(player_name)
+            same_container = tracked and (
+                tracked['dimension'], tracked['x'], tracked['y'], tracked['z']
+            ) == (dim_name, bx, by, bz)
+            if tracked and (not same_container or tracked.get('closing')):
+                self._diff_player_inventory(player_name)
+                tracked = None
+            if not tracked:
+                self._start_container_tracking(
+                    player_name, dim_name, bx, by, bz, block_type_str,
+                    container_owner, container_authorized
+                )
+            # Shelves, bookshelves, and pots transfer items through interaction
+            # without opening a window or producing a ContainerClose packet.
+            self._queue_container_capture(player_name)
+
+        # Link an ordinary chest interaction to the current exact snapshot so the
+        # WebUI can show its complete inventory even when no slot changed.
+        interaction_blockdata = ""
+        tracked = container_snapshots.get(player_name)
+        if tracked and (tracked['dimension'], tracked['x'], tracked['y'], tracked['z']) == (dim_name, bx, by, bz):
+            opening_snapshot = tracked.get('blockdata_snapshot')
+            interaction_blockdata = json.dumps({
+                'schema_version': BlockDataAdapter.SCHEMA_VERSION,
+                'provider': BlockDataAdapter.PROVIDER,
+                'container_type': block_type_str,
+                'snapshot_id': tracked.get('snapshot_id'),
+                'revision': (opening_snapshot or {}).get('revision'),
+                'reason': 'container_open',
+                'owner_name': tracked.get('owner_name'),
+                'authorized': bool(tracked.get('authorized', True)),
+                'unauthorized': not bool(tracked.get('authorized', True)),
+            }, ensure_ascii=True, separators=(',', ':'))
+
+        data_buffers['chest'].append({
+            'name': player_name,
+            'action': lang["action_interact"],
+            'coordinates': {'x': bx, 'y': by, 'z': bz},
+            'type': block_type_str,
+            'world': dim_name,
+            'time': now_est().isoformat(),
+            'blockdata': interaction_blockdata,
+        })
+
+    def _start_container_tracking(self, player_name, dim_name, bx, by, bz, block_type_str,
+                                  container_owner, container_authorized):
+        """Capture one opening baseline without replacing an active session."""
+        if CAPTURE_CONTAINER_OPEN_CLOSE:
             native_snapshot, snapshot_id = self._capture_native_snapshot(
                 dim_name, bx, by, bz, player_name, 'container_open', store=True
             )
@@ -4270,33 +4383,6 @@ class AntiGriefPlugin(Plugin):
                         'time': tm.time(),
                     }
 
-        # Link an ordinary chest interaction to the exact opening snapshot so the
-        # WebUI can show its complete inventory even when no slot changed.
-        interaction_blockdata = ""
-        tracked = container_snapshots.get(player_name)
-        if tracked and tracked.get('x') == bx and tracked.get('y') == by and tracked.get('z') == bz:
-            opening_snapshot = tracked.get('blockdata_snapshot')
-            interaction_blockdata = json.dumps({
-                'schema_version': BlockDataAdapter.SCHEMA_VERSION,
-                'provider': BlockDataAdapter.PROVIDER,
-                'container_type': block_type_str,
-                'snapshot_id': tracked.get('snapshot_id'),
-                'revision': (opening_snapshot or {}).get('revision'),
-                'reason': 'container_open',
-                'owner_name': tracked.get('owner_name'),
-                'authorized': bool(tracked.get('authorized', True)),
-                'unauthorized': not bool(tracked.get('authorized', True)),
-            }, ensure_ascii=True, separators=(',', ':'))
-
-        data_buffers['chest'].append({
-            'name': player_name,
-            'action': lang["action_interact"],
-            'coordinates': {'x': bx, 'y': by, 'z': bz},
-            'type': block_type_str,
-            'world': dim_name,
-            'time': now_est().isoformat(),
-            'blockdata': interaction_blockdata,
-        })
 
 
 
@@ -4460,6 +4546,13 @@ class AntiGriefPlugin(Plugin):
     @event_handler
     def on_player_quit(self, event: PlayerQuitEvent):
         """Keep the last exact snapshot but mark it as offline in the WebUI."""
+        player_name = str(event.player.name)
+        try:
+            self._diff_player_inventory(player_name)
+        except Exception as error:
+            self.logger.warning(f"[Container] Disconnect diff error for {player_name}: {error}")
+        finally:
+            container_snapshots.pop(player_name, None)
         try:
             self._capture_player_inventory(event.player, force=True)
         except Exception:

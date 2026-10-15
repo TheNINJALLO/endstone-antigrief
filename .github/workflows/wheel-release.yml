@@ -1,14 +1,12 @@
-name: Build wheel and publish release
+name: Build wheel artifact
 
 on:
   push:
     branches: [main]
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-wheel:
@@ -36,11 +34,3 @@ jobs:
           name: wheel
           path: dist/*.whl
           if-no-files-found: error
-
-      - name: Publish wheel to GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/*.whl --clobber
