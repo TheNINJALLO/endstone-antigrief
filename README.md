@@ -224,6 +224,8 @@ For a broken or exploded container, rollback:
 
 Open `http://SERVER-IP:8098` and authenticate with the configured secret.
 
+Press **Enter** or **APPLY** to search. Player filters trim surrounding spaces; areas accept `X Y Z Radius` or comma-separated values, with radius `0` selecting one position. Search failures are shown explicitly, while successful empty searches say no events match. The `CONNECTED` badge describes the dashboard's API connection. New buffered events can take up to 20 seconds to appear. Dashboard API requests preserve a proxy URL prefix and send the access key in a header.
+
 The event table now has a **VIEW NBT** control. The detail viewer exposes:
 
 - Full stored event or snapshot JSON

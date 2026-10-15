@@ -18,7 +18,9 @@ Access to the WebUI is protected by secret key authentication:
 ## 📊 Dashboard Modules
 
 ### 1. Real-Time Event Log
-- **Multi-Param Filtering**: Search interaction events by player, action type (break, place, container, kill), coordinate radius, keyword, and time window.
+- **Multi-Param Filtering**: Search interaction events by player, event type, coordinate radius, and time window. Press **Enter** in a filter or click **APPLY**. Player names are trimmed; enter areas as `X Y Z Radius` or `X, Y, Z, Radius`. Radius `0` selects the exact block position.
+- **Search Status**: `CONNECTED` means the event API returned a valid response. Invalid filters and failed requests show an explicit message; `SEARCH FAILED` is distinct from a successful search with no matching events. The badge does not certify that in-game logging is enabled. Buffered events can take up to 20 seconds to reach the database.
+- **Proxy Paths**: Dashboard requests preserve the page's URL prefix and authenticate with the `X-Secret-Key` header, so special characters in the key do not alter a search URL.
 - **Container Detail Inspector**: Click **VIEW NBT** on any container event card to open canonical item counts, custom names, enchantments, lore, and raw SNBT.
 - **Clean Item Rendering**: Empty slots are filtered automatically. Bundles and nested storage items render expandable contents without clutter.
 

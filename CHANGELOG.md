@@ -4,11 +4,13 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [1.5.20] - 2026-10-15
 
+- Fix dashboard search submission and display: Enter applies filters, player names are trimmed, areas accept spaces or commas, and radius zero searches the exact position. Invalid filters and failed requests show a visible error instead of leaving a blank or stale table. Older responses cannot replace a newer search.
+- Send dashboard access keys in request headers and resolve API/report paths relative to the dashboard, including installations behind a path prefix. Statistics failures no longer block event searches; the status badge reports connection/search state instead of always saying monitoring.
 - Recognize all eight copper-chest variants, lit furnaces/smokers, and wood shelves as containers. Previously, copper-chest interactions could appear in the dashboard without starting item tracking. Compare the next committed state after direct shelf/bookshelf/pot interactions as well.
 - Capture committed container slot changes after inventory transactions and authoritative stack responses, instead of waiting exclusively for a client close packet. Keep exact before/after item NBT and snapshot links for the dashboard and rollback.
 - Keep a running baseline so additions and removals across successive server ticks remain separate evidence even when the final inventory matches its opening state. Coalesce notifications in the same tick and avoid storing unchanged transaction snapshots.
 - Bind delayed captures to their original container session; flush the old session before opening another container. Capture final changes on server closes, disconnects, and plugin shutdown, and reconnect BlockData when a native session closes after a service interruption.
-- Add 30 regression cases covering container variants, direct interactions, transaction timing, SQLite persistence, dashboard API results, reopening races, lifecycle events, duplicate notifications, rejected requests, and the legacy fallback. These are simulated event tests; live validation of the updated plugin remains pending.
+- Add 39 regression cases, including nine headless Chrome cases against a local SQLite-backed API and 30 simulated container-event cases. The full 107-test suite passes. The updated plugin has not been installed on the live server.
 
 ## [1.5.19] - 2026-10-01
 

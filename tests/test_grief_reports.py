@@ -195,4 +195,4 @@ def test_report_api_dashboard_and_print_page(tmp_path):
     assert "Grief Proof Reports" in dashboard.text
     assert "function loadGriefReports()" in dashboard.text
     assert "VIEW / PRINT" in dashboard.text
-    assert "/reports/${encodeURIComponent(reportId)}" in dashboard.text
+    assert "apiUrl(`reports/${encodeURIComponent(reportId)}`" in dashboard.text
