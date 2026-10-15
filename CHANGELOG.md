@@ -4,10 +4,11 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [1.5.20] - 2026-10-15
 
+- Recognize all eight copper-chest variants, lit furnaces/smokers, and wood shelves as containers. Previously, copper-chest interactions could appear in the dashboard without starting item tracking. Compare the next committed state after direct shelf/bookshelf/pot interactions as well.
 - Capture committed container slot changes after inventory transactions and authoritative stack responses, instead of waiting exclusively for a client close packet. Keep exact before/after item NBT and snapshot links for the dashboard and rollback.
 - Keep a running baseline so additions and removals across successive server ticks remain separate evidence even when the final inventory matches its opening state. Coalesce notifications in the same tick and avoid storing unchanged transaction snapshots.
 - Bind delayed captures to their original container session; flush the old session before opening another container. Capture final changes on server closes, disconnects, and plugin shutdown, and reconnect BlockData when a native session closes after a service interruption.
-- Add 16 regression cases covering transaction timing, SQLite persistence, dashboard API results, reopening races, lifecycle events, duplicate notifications, rejected requests, and the legacy fallback. These are simulated event tests; live BDS/player validation remains pending.
+- Add 30 regression cases covering container variants, direct interactions, transaction timing, SQLite persistence, dashboard API results, reopening races, lifecycle events, duplicate notifications, rejected requests, and the legacy fallback. These are simulated event tests; live validation of the updated plugin remains pending.
 
 ## [1.5.19] - 2026-10-01
 

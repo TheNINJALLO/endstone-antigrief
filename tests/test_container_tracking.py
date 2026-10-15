@@ -31,11 +31,13 @@ def plugin(tmp_path):
         '_snapshot_player_inventory', '_diff_player_inventory', '_queue_container_capture',
         'on_packet_receive', 'on_packet_send', 'on_player_interact', 'on_player_quit',
         '_queue_container_snapshot', '_start_container_tracking', 'on_disable',
+        '_is_container_block_type',
     }
     methods = [deepcopy(node) for node in plugin_class.body
                if isinstance(node, ast.FunctionDef) and node.name in method_names]
     for method in methods:
-        method.decorator_list = []
+        method.decorator_list = [decorator for decorator in method.decorator_list
+                                 if isinstance(decorator, ast.Name) and decorator.id == 'staticmethod']
         method.returns = None
         for argument in method.args.args:
             argument.annotation = None
@@ -47,6 +49,9 @@ def plugin(tmp_path):
     }
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef)
              and node.name in functions]
+    nodes.insert(0, next(node for node in tree.body if isinstance(node, ast.Assign)
+                         and any(isinstance(target, ast.Name) and target.id == 'CONTAINER_BLOCKS'
+                                 for target in node.targets)))
     nodes.append(ast.ClassDef(name='Harness', bases=[], keywords=[], body=methods,
                               decorator_list=[]))
     adapter = load_adapter()
@@ -80,7 +85,6 @@ def plugin(tmp_path):
         get_player=lambda name: instance.player,
         scheduler=SimpleNamespace(run_task=lambda owner, task, **kw: instance.tasks.append(task)),
     )
-    instance._is_container_block_type = lambda kind: kind == 'minecraft:chest'
     instance._is_container_authorized = lambda *args: ('Owner', False)
     instance._capture_player_inventory = Mock()
     instance._mark_player_inventory_offline = Mock()
@@ -94,9 +98,9 @@ def plugin(tmp_path):
     return instance
 
 
-def open_container(plugin, x=1):
+def open_container(plugin, x=1, kind='minecraft:chest'):
     plugin.on_player_interact(SimpleNamespace(
-        player=plugin.player, block=SimpleNamespace(type='minecraft:chest', x=x, y=64, z=2),
+        player=plugin.player, block=SimpleNamespace(type=kind, x=x, y=64, z=2),
         action='RIGHT_CLICK_BLOCK', is_cancelled=False,
     ))
 
@@ -296,3 +300,34 @@ def test_native_tracking_recovers_connection_at_close(plugin):
     receive(plugin, 47)
     run_tasks(plugin)
     assert [row['action'] for row in plugin.namespace['data_buffers']['container_access']] == ['Container Add']
+
+
+@pytest.mark.parametrize('waxed', ['', 'waxed_'])
+@pytest.mark.parametrize('oxidation', ['', 'exposed_', 'weathered_', 'oxidized_'])
+def test_copper_chest_variants_capture_item_moves(plugin, waxed, oxidation):
+    kind = f'minecraft:{waxed}{oxidation}copper_chest'
+    plugin.current['type'] = kind
+    open_container(plugin, kind=kind)
+    receive(plugin, 147)
+    set_items(plugin, 7)
+    plugin.current['type'] = kind
+    run_tasks(plugin)
+    records = plugin.namespace['data_buffers']['container_access']
+    assert [row['action'] for row in records] == ['Container Add']
+    assert json.loads(records[0]['blockdata'])['container_type'] == kind
+    assert plugin.namespace['container_snapshots']['Player']['block_type'] == kind
+
+
+@pytest.mark.parametrize('kind', ['minecraft:oak_shelf', 'minecraft:chiseled_bookshelf',
+                                 'minecraft:decorated_pot', 'minecraft:lit_furnace',
+                                 'minecraft:lit_blast_furnace', 'minecraft:lit_smoker'])
+def test_interaction_alone_captures_committed_container_changes(plugin, kind):
+    plugin.current['type'] = kind
+    open_container(plugin, kind=kind)
+    # No window-close packet or stack notification is needed for this path.
+    set_items(plugin, 1)
+    plugin.current['type'] = kind
+    run_tasks(plugin)
+    records = plugin.namespace['data_buffers']['container_access']
+    assert [row['action'] for row in records] == ['Container Add']
+    assert json.loads(records[0]['blockdata'])['container_type'] == kind

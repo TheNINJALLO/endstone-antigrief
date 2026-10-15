@@ -161,6 +161,11 @@ CONTAINER_BLOCKS = {
     "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
     "minecraft:hopper", "minecraft:dropper", "minecraft:dispenser",
     "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker",
+    "minecraft:lit_furnace", "minecraft:lit_blast_furnace", "minecraft:lit_smoker",
+    "minecraft:copper_chest", "minecraft:exposed_copper_chest",
+    "minecraft:weathered_copper_chest", "minecraft:oxidized_copper_chest",
+    "minecraft:waxed_copper_chest", "minecraft:waxed_exposed_copper_chest",
+    "minecraft:waxed_weathered_copper_chest", "minecraft:waxed_oxidized_copper_chest",
     "minecraft:brewing_stand", "minecraft:chiseled_bookshelf",
     "minecraft:crafter", "minecraft:decorated_pot", "minecraft:shulker_box",
     "minecraft:white_shulker_box", "minecraft:orange_shulker_box",
@@ -1140,7 +1145,10 @@ class AntiGriefPlugin(Plugin):
             value = value.split(".")[-1]
         if value and ":" not in value:
             value = "minecraft:" + value
-        return value in CONTAINER_BLOCKS or value.endswith("_shulker_box")
+        return (
+            value in CONTAINER_BLOCKS or value.endswith("_shulker_box")
+            or (value.startswith("minecraft:") and value.endswith("_shelf"))
+        )
 
     def _set_container_owner(self, world, x, y, z, owner_name, source="placement"):
         if not CONTAINER_OWNERSHIP_ENABLED or not owner_name:
@@ -4308,6 +4316,9 @@ class AntiGriefPlugin(Plugin):
                     player_name, dim_name, bx, by, bz, block_type_str,
                     container_owner, container_authorized
                 )
+            # Shelves, bookshelves, and pots transfer items through interaction
+            # without opening a window or producing a ContainerClose packet.
+            self._queue_container_capture(player_name)
 
         # Link an ordinary chest interaction to the current exact snapshot so the
         # WebUI can show its complete inventory even when no slot changed.

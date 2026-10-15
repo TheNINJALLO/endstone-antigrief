@@ -196,7 +196,7 @@ The database writer flushes buffered records every 20 seconds. Refresh the WebUI
 
 Slot changes contain the slot, amount, full before item, full after item, revisions, and links to the before/after complete snapshots. Metadata changes include the before/after canonical actor NBT with inventory and coordinate fields removed for a clean comparison.
 
-Supported containers include chests, trapped chests, barrels, hoppers, droppers, dispensers, furnaces, blast furnaces, smokers, brewing stands, chiseled bookshelves, crafters, decorated pots, and all shulker-box colors supported by the installed BlockData adapter.
+Supported containers include chests, trapped chests, all oxidation/waxing variants of copper chests, barrels, hoppers, droppers, dispensers, furnaces, blast furnaces, smokers (including their lit block types), brewing stands, wood shelves, chiseled bookshelves, crafters, decorated pots, and all shulker-box colors supported by the installed BlockData adapter. Direct shelf/bookshelf/pot interactions also schedule a committed-state comparison without requiring a window-close packet.
 
 ## Rollback
 
