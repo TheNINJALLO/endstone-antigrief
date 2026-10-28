@@ -325,7 +325,7 @@ def create_app():
     app = FastAPI(
         title="AntiGrief WebUI",
         description="Player Behavior Logging Dashboard",
-        version="1.5.22"
+        version="1.5.23"
     )
 
     app.add_middleware(

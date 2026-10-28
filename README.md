@@ -75,14 +75,14 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 | Bedrock Dedicated Server | `1.26.60.6` (Minecraft `1.26.60`) |
 | BlockData API | `0.6.9` complete inspector bundle wheel |
 | Native runtime | Linux x86-64, CPython `3.14` |
-| Plugin release | `v1.5.22` |
+| Plugin release | `v1.5.23` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v1.5.22 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
+gh release download v1.5.23 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
@@ -137,7 +137,7 @@ AntiGrief v1.5.18 fixes repeated SQLite flush failures caused by non-UTF-8 item 
 1. Stop the server.
 2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
 3. Copy the complete BlockData 0.6.9 inspector bundle wheel into `plugins/`.
-4. Copy `endstone_antigrief-1.5.22-py3-none-any.whl` into `plugins/`.
+4. Copy `endstone_antigrief-1.5.23-py3-none-any.whl` into `plugins/`.
 5. Start the server and verify the console reports `BlockData API connected`.
 6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
@@ -158,7 +158,8 @@ The old `antigrief_companion_bp` is no longer required for v1.5.1. It remains in
   "web_ui_secret": "change_this_secret_key",
   "require_blockdata_api": true,
   "capture_container_open_close": true,
-  "store_raw_snbt": true
+  "store_raw_snbt": true,
+  "build_legacy_history_index": false
 }
 ```
 
@@ -279,6 +280,10 @@ MIT License. The BlockData API dependency is distributed under its own Apache-2.
 - Removed access to Endstone's native `Plugin.logger` property from the Python constructor.
 - Runtime state and the BlockData adapter are now initialized in `on_load()`, after Endstone attaches the native plugin wrapper.
 - This fixes the Linux SIGSEGV seen in `pybind11::type_caster_base<endstone::Logger>` during `PyPluginLoader::loadPlugins`.
+
+## 1.5.23 database startup hotfix
+
+Skip building the additional coordinate/time history index by default. This fixes the 1.5.22 startup failure when its index build exhausts database, server-quota, or temporary storage. Existing indexes and audit history are retained. Administrators can opt in with `build_legacy_history_index: true` after checking available storage; optional maintenance failures no longer undo completed database setup or prevent startup. Audit writes still require free space. See [troubleshooting](docs/troubleshooting.md).
 
 ## 1.5.22 container performance and BlockData 0.6.9
 

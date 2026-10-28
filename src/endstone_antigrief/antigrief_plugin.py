@@ -1,5 +1,5 @@
 """
-AntiGrief Plugin v1.5.22 - BlockData Edition
+AntiGrief Plugin v1.5.23 - BlockData Edition
 Player behavior logging, analysis, and WebUI dashboard for Endstone
 """
 
@@ -60,7 +60,7 @@ def now_est():
 # CONFIGURATION
 # ============================================================================
 
-PLUGIN_VERSION = "v1.5.22"
+PLUGIN_VERSION = "v1.5.23"
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -290,7 +290,7 @@ def serialize_block_data(block):
 # DATABASE SETUP
 # ============================================================================
 
-def init_database():
+def init_database(*, build_legacy_history_index=False):
     """Initialize SQLite database with required tables"""
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -354,7 +354,6 @@ def init_database():
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(time)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_position ON interactions(world, x, y, z)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_coordinates_time ON interactions(x, y, z, time)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_container_snapshots_time ON container_snapshots(captured_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_container_snapshots_position ON container_snapshots(world, x, y, z)")
 
@@ -497,11 +496,32 @@ def init_database():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_grief_reports_player ON grief_reports(primary_player)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_grief_reports_status ON grief_reports(status)")
 
+    # Commit required schema/data migrations before optional maintenance. SQLite
+    # can roll back the active transaction when an index build runs out of space.
     conn.commit()
+    if build_legacy_history_index:
+        try:
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_interactions_coordinates_time "
+                "ON interactions(x, y, z, time)"
+            )
+            conn.commit()
+        except sqlite3.OperationalError as error:
+            conn.rollback()
+            print(
+                f"[AntiGrief] Optional legacy history index was not built: {error}. "
+                "Required database setup is complete; startup will continue. "
+                "Check storage quota and temporary-disk space before enabling "
+                "build_legacy_history_index again. Audit writes still require free space."
+            )
     return conn, cursor
 
 # Initialize database
-conn, cursor = init_database()
+# This opt-in setting is deliberately absent from DEFAULT_CONFIG so an existing
+# config need not be rewritten on a server already reporting exhausted storage.
+conn, cursor = init_database(
+    build_legacy_history_index=bool(config.get("build_legacy_history_index", False))
+)
 
 # Data buffers for batch writing
 data_buffers = {
@@ -701,7 +721,7 @@ writer_thread.start()
 
 class AntiGriefPlugin(Plugin):
     api_version = "0.11"
-    version = "1.5.22"
+    version = "1.5.23"
     depend = ["blockdata_api"]
 
     # Command definitions with English descriptions

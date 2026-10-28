@@ -26,10 +26,13 @@ AntiGrief creates `plugins/antigrief_data/config.json`. Existing files are migra
 | `require_blockdata_api` | Treats BlockData as required for exact functions. |
 | `capture_container_open_close` | Enables opening baselines, committed transaction comparisons, and final container snapshots on close/disconnect. |
 | `store_raw_snbt` | Stores raw SNBT when available. |
+| `build_legacy_history_index` | Default `false`. Opt in to building an additional coordinate/time history index only after confirming sufficient database, server-quota, and temporary-disk space. Existing indexes remain in use. |
 | `blockdata_connect_retry_ticks` | Retry interval if the service registers late. |
 | `blockdata_connect_log_every` | Reduces repeated startup warnings. |
 
 Routine container access/ownership/item-change console messages are disabled. Audit evidence remains in SQLite and the WebUI. Ownership/trust lookups use a bounded 30-second cache; `/agowner` changes invalidate the affected entry immediately.
+
+The optional index setting can be omitted. It is not automatically inserted into existing configuration files during upgrades.
 
 ## Player inventories
 
@@ -67,6 +70,7 @@ Recovery items are queued only when an operator confirms an incident with `/agba
   "require_blockdata_api": true,
   "capture_container_open_close": true,
   "store_raw_snbt": true,
+  "build_legacy_history_index": false,
   "container_ownership_enabled": true,
   "recover_stolen_items_on_rollback": true,
   "confiscation_allow_type_fallback_for_tagged_items": true,

@@ -130,18 +130,15 @@ def test_access_cache_is_bounded_and_keeps_recent_containers(plugin):
     assert ('overworld', 1, 64, 2) not in plugin._container_access_cache
 
 
-def test_historical_owner_lookup_uses_coordinate_index(plugin):
+def test_historical_owner_lookup_works_without_optional_coordinate_index(plugin):
     with sqlite3.connect(plugin.namespace['DB_FILE']) as db:
         db.execute(
             'INSERT INTO interactions(name,world,type,x,y,z,action,time) VALUES (?,?,?,?,?,?,?,?)',
             ('Builder', 'Overworld', 'minecraft:chest', 1, 64, 2, 'Place', '2026-10-28'),
         )
-        plan = db.execute(
-            "EXPLAIN QUERY PLAN SELECT name,world,type FROM interactions "
-            "WHERE x=? AND y=? AND z=? AND action LIKE '%Place%' ORDER BY time ASC LIMIT 100",
-            (1, 64, 2),
-        ).fetchall()
-    assert any('SEARCH' in row[3] and 'idx_interactions_coordinates_time' in row[3] for row in plan)
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='idx_interactions_coordinates_time'"
+        ).fetchone() is None
     assert plugin._get_container_owner('overworld', 1, 64, 2) == 'Builder'
 
 

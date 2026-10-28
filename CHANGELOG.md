@@ -2,6 +2,14 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## [1.5.23] - 2026-10-28
+
+- Fix startup failure while creating `idx_interactions_coordinates_time` on a large history database with insufficient database, quota, or temporary-disk space. Disable this additional index build by default; retain existing indexes and all audit data.
+- Add explicit `build_legacy_history_index: false` configuration. Administrators can opt in after confirming sufficient storage; container ownership/trust caching works without the index.
+- Commit required schema and recovery-safety migrations before optional index maintenance. Roll back and report an optional index OperationalError without aborting startup or undoing completed migrations. Required database failures remain visible.
+- Add real SQLite page-limit regressions for `SQLITE_FULL`, default/opt-in startup, committed recovery-safety updates, preserved audit history, and logging after capacity is restored.
+- Avoid forcing an existing configuration rewrite for the optional index flag on storage-constrained upgrades. All 137 local tests, CI Ruff checks, build, and package verification pass.
+
 ## [1.5.22] - 2026-10-28
 
 - Remove routine container open, access, ownership, slot-change, legacy-diff, and backup-cache console messages. Unauthorized activity remains in the database and WebUI; native failures and rollback status remain visible.
@@ -70,7 +78,8 @@ All notable changes are documented here. This project follows semantic versionin
 - Recursive bundle and custom storage-item rendering.
 - Coordinated rollback, confirmed item recovery, and printable grief reports.
 
-[Unreleased]: https://github.com/TheNINJALLO/endstone-antigrief/compare/v1.5.22...HEAD
+[Unreleased]: https://github.com/TheNINJALLO/endstone-antigrief/compare/v1.5.23...HEAD
+[1.5.23]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.23
 [1.5.22]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.22
 [1.5.16]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.16
 [1.5.13]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.13
