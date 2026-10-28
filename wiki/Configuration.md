@@ -29,13 +29,15 @@ AntiGrief creates `plugins/antigrief_data/config.json`. Existing files are migra
 | `blockdata_connect_retry_ticks` | Retry interval if the service registers late. |
 | `blockdata_connect_log_every` | Reduces repeated startup warnings. |
 
+Routine container access/ownership/item-change console messages are disabled. Audit evidence remains in SQLite and the WebUI. Ownership/trust lookups use a bounded 30-second cache; `/agowner` changes invalidate the affected entry immediately.
+
 ## Player inventories
 
 | Key | Purpose |
 |---|---|
 | `capture_player_inventories` | Stores online inventory and Ender Chest snapshots. |
 | `player_inventory_capture_ticks` | Scan interval. |
-| `player_inventory_capture_batch_size` | Players processed per scan. |
+| `player_inventory_capture_batch_size` | Players scheduled per scan, spread across the scan interval instead of captured in one tick. |
 | `player_inventory_decode_warning_cooldown_seconds` | Backoff for malformed UTF-8 warnings. |
 
 ## Recovery

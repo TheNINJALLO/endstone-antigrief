@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "antigrief_version": "1.5.22",
+  "target": {
+    "blockdata_version": "0.6.9",
+    "endstone": "0.11.15",
+    "bds": "1.26.60.6",
+    "python": "3.14",
+    "platform": "linux-x64"
+  },
+  "local_validation": {
+    "date": "2026-10-28",
+    "python": "3.11.9",
+    "platform": "windows-x64",
+    "tests_passed": 131,
+    "ruff_select": "E9,F63,F7,F82",
+    "ruff_passed": true,
+    "native_services": "simulated",
+    "webui": "local SQLite-backed API and isolated headless Chrome"
+  },
+  "benchmark": {
+    "baseline_commit": "0ec702635224d282fdc6971542610f006d83bde5",
+    "fixture": "54 occupied slots, each containing a bundle of 8 rich-NBT swords",
+    "iterations_per_sample": 100,
+    "samples": 3,
+    "statistic": "median",
+    "results": {
+      "unchanged_diff": {
+        "previous_ms_per_call": 16.1451,
+        "updated_ms_per_call": 0.1958,
+        "speedup": 82.47
+      },
+      "one_slot_diff": {
+        "previous_ms_per_call": 16.5328,
+        "updated_ms_per_call": 0.4929,
+        "speedup": 33.54
+      },
+      "snapshot_summary": {
+        "previous_ms_per_call": 8.0168,
+        "updated_ms_per_call": 0.0414,
+        "speedup": 193.59
+      }
+    },
+    "reproduce": "python scripts/benchmark_container_snapshots.py --baseline v1.5.20",
+    "limitations": "Measures Python diff/summary work only; excludes native capture, database writes, and live server tick time."
+  },
+  "live_bds_validation": "pending",
+  "live_player_load_test": "pending"
+}

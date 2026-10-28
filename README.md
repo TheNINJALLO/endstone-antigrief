@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <img alt="Endstone 0.11.10" src="https://img.shields.io/badge/Endstone-0.11.10-52b7a8?style=flat-square">
+  <img alt="Endstone 0.11.15" src="https://img.shields.io/badge/Endstone-0.11.15-52b7a8?style=flat-square">
   <img alt="API 0.11" src="https://img.shields.io/badge/API-0.11-63b8ff?style=flat-square">
-  <img alt="BDS 1.26.45" src="https://img.shields.io/badge/BDS-1.26.45-8b7dff?style=flat-square">
-  <img alt="Python >=3.11" src="https://img.shields.io/badge/Python-%3E=3.11-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white">
+  <img alt="BDS 1.26.60.6" src="https://img.shields.io/badge/BDS-1.26.60.6-8b7dff?style=flat-square">
+  <img alt="CPython 3.14" src="https://img.shields.io/badge/CPython-3.14-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white">
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 ## Overview
 
-BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, and WebUI for Endstone. This release is aligned with Endstone 0.11.10 and Minecraft Bedrock Dedicated Server 1.26.45, and is distributed as a Python wheel for direct installation in an Endstone server.
+BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, and WebUI for Endstone. This release targets BlockData API 0.6.9 on Endstone 0.11.15, Minecraft Bedrock Dedicated Server 1.26.60.6, and CPython 3.14 on Linux x86-64. AntiGrief is distributed as a Python wheel for direct installation in an Endstone server.
 
 ## What it does
 
@@ -70,24 +70,25 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 
 | Component | Supported version |
 |---|---|
-| Endstone | `0.11.10` |
+| Endstone | `0.11.15` |
 | Endstone API | `0.11` |
-| Bedrock Dedicated Server | `1.26.45` |
-| Python | `>=3.11` |
-| Plugin release | `v1.5.20` |
+| Bedrock Dedicated Server | `1.26.60.6` (Minecraft `1.26.60`) |
+| BlockData API | `0.6.9` complete inspector bundle wheel |
+| Native runtime | Linux x86-64, CPython `3.14` |
+| Plugin release | `v1.5.22` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v1.5.20 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
+gh release download v1.5.22 --repo TheNINJALLO/endstone-antigrief --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
 
 > [!IMPORTANT]
-> Use Endstone `0.11.10` with BDS `1.26.45`. Back up worlds and plugin data before upgrading a production server.
+> Use BlockData `0.6.9` with Endstone `0.11.15`, BDS `1.26.60.6`, and CPython `3.14` on Linux x86-64. See the [installation guide](docs/installation.md) for the complete bundle and upgrade steps.
 
 ## Configuration and secrets
 
@@ -123,12 +124,11 @@ Install a **matching release** of [`TheNINJALLO/endstone-blockdata-api`](https:/
 
 The BlockData installation must include both files from the complete platform ZIP:
 
-1. The native `blockdata_api` plugin (`.dll` on Windows or `.so` on Linux)
-2. The matching platform-specific `endstone_blockdata_inspector` wheel containing the Python native bridge
+Install `endstone_blockdata_inspector-0.6.9-cp314-cp314-linux_x86_64.whl` from the [BlockData v0.6.9 deployment ZIP](https://github.com/TheNINJALLO/endstone-blockdata-api/releases/tag/v0.6.9). This complete wheel contains the Python bridge and loads its matching native `blockdata_api` provider automatically. Do not install an additional standalone provider library alongside it.
 
 The BDS version, Endstone version, Python ABI, platform, and BlockData release must match. AntiGrief declares `depend = ["blockdata_api"]` and dynamically loads the bridge shipped in the matching inspector wheel.
 
-Use BlockData v0.6.3 for BDS 1.26.45, Endstone 0.11.10, and CPython 3.14, choosing the complete ZIP for your server platform.
+The supported native set is BlockData v0.6.9, BDS 1.26.60.6, Endstone 0.11.15, and CPython 3.14 on Linux x86-64. The portable SDK wheel alone is insufficient; this BlockData release does not provide a Windows native bundle.
 
 AntiGrief v1.5.18 fixes repeated SQLite flush failures caused by non-UTF-8 item NBT. It escapes canonical JSON for storage and preserves the original bytes for restore. Update AntiGrief as well as BlockData: safe diagnostic SNBT alone does not fix older AntiGrief JSON serialization. The update does not require a database migration.
 
@@ -136,8 +136,8 @@ AntiGrief v1.5.18 fixes repeated SQLite flush failures caused by non-UTF-8 item 
 
 1. Stop the server.
 2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
-3. Copy the two matching BlockData files into `plugins/`.
-4. Copy `endstone_antigrief-1.5.20-py3-none-any.whl` into `plugins/`.
+3. Copy the complete BlockData 0.6.9 inspector bundle wheel into `plugins/`.
+4. Copy `endstone_antigrief-1.5.22-py3-none-any.whl` into `plugins/`.
 5. Start the server and verify the console reports `BlockData API connected`.
 6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
@@ -280,12 +280,20 @@ MIT License. The BlockData API dependency is distributed under its own Apache-2.
 - Runtime state and the BlockData adapter are now initialized in `on_load()`, after Endstone attaches the native plugin wrapper.
 - This fixes the Linux SIGSEGV seen in `pybind11::type_caster_base<endstone::Logger>` during `PyPluginLoader::loadPlugins`.
 
+## 1.5.22 container performance and BlockData 0.6.9
+
+Routine container-access and item-change messages no longer fill the console. Audit history and unauthorized-access details remain available in the database and WebUI. Container ownership/trust lookups use a bounded cache, unchanged native revisions skip diff work and duplicate close snapshots, and player inventory scans run across multiple ticks. Known ordinary block placements no longer schedule native container checks.
+
+Target the new Endstone 0.11.15 / BDS 1.26.60.6 native release. Recognize the bridge's `canonical` and `snbt` block-entity fields for snapshot metadata, audit rows, and WebUI inspection, while continuing to read older AntiGrief field names. Disabling `store_raw_snbt` excludes both SNBT field names from stored container snapshots. Existing databases and configuration are retained.
+
+See [validation](docs/validation/1.5.22.json) for local regression and Python benchmark results. Live BDS load testing remains pending.
+
 ## 1.5.19 recovery hotfix
 
 Recovery retries no longer refill containers. Run `/agstop` (console: `agstop`) to cancel all pending rollback work and saved recovery queues, or `/agstop <recovery ID>` for one batch. Cancellation persists across restarts and leaves already-applied changes in place. See the [rollback guide](docs/rollback-and-recovery.md#stopping-a-rollback-or-recovery-loop) for the upgrade procedure when an older server is already duplicating items.
 
 ## 1.5.18 dependency repair
 
-AntiGrief now prefers the current BlockData inspector bridge, rejects mismatched native/bridge versions before use, and reconnects after stale service failures. Install the complete BlockData 0.6.6 bundle wheel; see [installation](docs/installation.md) for the supported Linux runtime and upgrade steps.
+AntiGrief 1.5.18 introduced preference for the current BlockData inspector bridge, rejection of mismatched native/bridge versions, and reconnection after stale service failures. That release was qualified with BlockData 0.6.6; see [installation](docs/installation.md) for the current supported bundle and runtime.
 
 The exact released AntiGrief and BlockData wheels passed a disposable BDS integration test covering native service startup, container and item NBT, nested bundles, invalid-write rejection, and clean shutdown. [Validation results and artifact hashes](docs/validation/1.5.18.json).

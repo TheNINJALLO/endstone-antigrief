@@ -31,7 +31,7 @@ def plugin(tmp_path):
         '_snapshot_player_inventory', '_diff_player_inventory', '_queue_container_capture',
         'on_packet_receive', 'on_packet_send', 'on_player_interact', 'on_player_quit',
         '_queue_container_snapshot', '_start_container_tracking', 'on_disable',
-        '_is_container_block_type',
+        '_is_container_block_type', 'on_block_place',
     }
     methods = [deepcopy(node) for node in plugin_class.body
                if isinstance(node, ast.FunctionDef) and node.name in method_names]
@@ -59,10 +59,11 @@ def plugin(tmp_path):
         'sqlite3': sqlite3, 'DB_FILE': str(tmp_path / 'agdata.db'), 'json': json,
         'uuid4': uuid4, 'BlockDataAdapter': adapter, 'STORE_RAW_SNBT': True,
         'now_est': lambda: datetime.now(timezone.utc),
-        'tm': SimpleNamespace(time=lambda: 100), 'container_snapshots': {},
+        'tm': SimpleNamespace(time=lambda: 100, monotonic=lambda: 100), 'container_snapshots': {},
         'data_buffers': defaultdict(list), 'buffer_lock': threading.Lock(),
         'db_write_lock': threading.Lock(), 'is_cleaning': False,
         'CAPTURE_CONTAINER_OPEN_CLOSE': True, 'lang': {'action_interact': 'Interact'},
+        'CONTAINER_OWNERSHIP_ENABLED': True,
         'PlayerInteractEvent': SimpleNamespace(RIGHT_CLICK_BLOCK='RIGHT_CLICK_BLOCK'),
     }
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
@@ -176,6 +177,43 @@ def test_old_close_callback_does_not_consume_reopened_container(plugin):
     assert [(row['coordinates']['x'], row['action']) for row in records] == [(1, 'Container Add')]
 
 
+@pytest.mark.parametrize('store_snbt', [True, False])
+def test_native_069_fields_reach_sqlite_and_dashboard(plugin, store_snbt):
+    plugin.namespace['STORE_RAW_SNBT'] = store_snbt
+
+    def use_native_fields():
+        entity = plugin.current['block_entity']
+        entity['canonical'] = entity.pop('canonical_nbt')
+        entity['snbt'] = '{CustomName:"Vault"}'
+
+    use_native_fields()
+    open_container(plugin)
+    receive(plugin, 147)
+    set_items(plugin, 4)
+    use_native_fields()
+    run_tasks(plugin)
+    payload = json.loads(plugin.namespace['data_buffers']['container_access'][0]['blockdata'])
+    assert payload['canonical_nbt'] is True
+    plugin.namespace['flush_data_to_db']()
+
+    webui = load_webui()
+    webui.DB_FILE = plugin.namespace['DB_FILE']
+    webui.get_web_config = lambda: {'secret': 'secret', 'max_results': 10000}
+    response = TestClient(webui.create_app()).get(
+        f"/api/container-snapshots/{payload['after_snapshot_id']}?secret=secret"
+    )
+    assert response.status_code == 200
+    saved = response.json()
+    assert saved['metadata']['canonical_nbt'] is True
+    assert saved['raw_snbt'] == ('{CustomName:"Vault"}' if store_snbt else '')
+    entity = saved['snapshot']['block_entity']
+    assert entity['canonical'] is True
+    assert ('snbt' in entity) is store_snbt
+    assert 'raw_snbt' not in entity
+    assert plugin.current['block_entity']['snbt'] == '{CustomName:"Vault"}'
+    assert entity['inventory'][0]['item']['tag']['display']['Name'] == 'Saved diamond'
+
+
 def test_add_then_take_before_close_keeps_both_changes(plugin):
     open_container(plugin)
     receive(plugin, 147)
@@ -241,6 +279,62 @@ def test_rejected_request_adds_no_event_or_redundant_snapshot(plugin):
     assert plugin.namespace['container_snapshots']['Player'] is opening_session
     assert not plugin.namespace['data_buffers']['container_access']
     assert len(plugin.namespace['data_buffers']['container_snapshot']) == 1
+
+
+def test_noop_requests_and_close_skip_diff_and_snapshot_serialization(plugin):
+    open_container(plugin)
+    plugin.blockdata.diff_inventory = Mock(wraps=plugin.blockdata.diff_inventory)
+    plugin._queue_container_snapshot = Mock(wraps=plugin._queue_container_snapshot)
+    for _ in range(20):
+        receive(plugin, 147)
+        send(plugin, 148)
+        run_tasks(plugin)
+    receive(plugin, 47)
+    run_tasks(plugin)
+    plugin.blockdata.diff_inventory.assert_not_called()
+    plugin._queue_container_snapshot.assert_not_called()
+    assert not plugin.namespace['container_snapshots']
+
+
+def test_container_access_is_quiet_and_keeps_unauthorized_audit_records(plugin):
+    open_container(plugin)
+    set_items(plugin, 4)
+    receive(plugin, 147)
+    run_tasks(plugin)
+    receive(plugin, 47)
+    run_tasks(plugin)
+    plugin.logger.info.assert_not_called()
+    plugin.logger.warning.assert_not_called()
+    records = plugin.namespace['data_buffers']['container_access']
+    assert [record['action'] for record in records] == ['Container Add']
+    assert json.loads(records[0]['blockdata'])['unauthorized'] is True
+
+
+@pytest.mark.parametrize('kind', ['minecraft:stone', 'minecraft:dirt', 'minecraft:oak_planks'])
+def test_ordinary_placement_does_not_schedule_native_container_checks(plugin, kind):
+    plugin.namespace['lang']['action_place'] = 'Place'
+    plugin.blockdata.capture = Mock(side_effect=AssertionError('No container capture needed'))
+    block = SimpleNamespace(type=kind, x=1, y=64, z=2)
+    plugin.on_block_place(SimpleNamespace(
+        player=plugin.player, block=block, block_placed_state=SimpleNamespace(type=kind),
+    ))
+    assert not plugin.tasks
+    plugin.blockdata.capture.assert_not_called()
+    assert plugin.namespace['data_buffers']['place'][0]['type'] == kind
+
+
+def test_container_placement_still_registers_owner_without_console_output(plugin):
+    plugin.namespace['lang']['action_place'] = 'Place'
+    plugin._set_container_owner = Mock()
+    block = SimpleNamespace(type='minecraft:chest', x=1, y=64, z=2)
+    plugin.on_block_place(SimpleNamespace(
+        player=plugin.player, block=block, block_placed_state=block,
+    ))
+    run_tasks(plugin)
+    plugin._set_container_owner.assert_called_once_with(
+        'overworld', 1, 64, 2, 'Player', 'container_placement',
+    )
+    plugin.logger.info.assert_not_called()
 
 
 def test_duplicate_interaction_keeps_original_baseline(plugin):

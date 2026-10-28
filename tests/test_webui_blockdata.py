@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 
 from fastapi.testclient import TestClient
+import pytest
 
 
 def load_webui():
@@ -15,7 +16,8 @@ def load_webui():
     return module
 
 
-def test_snapshot_log_detail_and_dashboard_button(tmp_path):
+@pytest.mark.parametrize("native_fields", [False, True], ids=["legacy", "blockdata-0.6.9"])
+def test_snapshot_log_detail_and_dashboard_button(tmp_path, native_fields):
     webui = load_webui()
     db_path = tmp_path / "agdata.db"
     huge_revision = (1 << 64) - 1
@@ -25,8 +27,8 @@ def test_snapshot_log_detail_and_dashboard_button(tmp_path):
         "revision": huge_revision,
         "block_entity": {
             "nbt": {"CustomName": "Vault"},
-            "raw_snbt": '{CustomName:"Vault"}',
-            "canonical_nbt": True,
+            "snbt" if native_fields else "raw_snbt": '{CustomName:"Vault"}',
+            "canonical" if native_fields else "canonical_nbt": True,
             "is_container": True,
             "container_size": 27,
             "inventory": [
@@ -84,6 +86,13 @@ def test_snapshot_log_detail_and_dashboard_button(tmp_path):
                 }),
             ),
         )
+        inline_id = db.execute(
+            "INSERT INTO interactions(name,action,x,y,z,type,world,time,blockdata) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "Steve", "Break", 1, 2, 3, "minecraft:chest", "overworld",
+                "2026-07-27T20:02:00-04:00", json.dumps({"block_snapshot": snapshot}),
+            ),
+        ).lastrowid
         db.commit()
 
     webui.DB_FILE = str(db_path)
@@ -104,6 +113,10 @@ def test_snapshot_log_detail_and_dashboard_button(tmp_path):
     assert log_detail.status_code == 200
     assert log_detail.json()["resolved_snapshot_id"] == "snap1"
     assert log_detail.json()["snapshot"]["block_entity"]["inventory"][0]["item"]["id"] == "minecraft:diamond_sword"
+
+    inline_detail = client.get(f"/api/logs/{inline_id}/blockdata?secret=secret")
+    assert inline_detail.status_code == 200
+    assert inline_detail.json()["raw_snbt"] == '{CustomName:"Vault"}'
 
     dashboard = client.get("/")
     assert dashboard.status_code == 200

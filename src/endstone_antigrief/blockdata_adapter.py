@@ -22,7 +22,7 @@ class BlockDataAdapter:
 
     PROVIDER = "endstone-blockdata-api"
     SCHEMA_VERSION = 2
-    EXPECTED_VERSION = "0.6.6"
+    EXPECTED_VERSION = "0.6.9"
 
     _BRIDGE_MODULES = (
         "endstone_blockdata_inspector._endstone_blockdata_live",
@@ -570,10 +570,23 @@ class BlockDataAdapter:
 
     @staticmethod
     def block_entity(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Expose native bridge fields under AntiGrief's persisted field names.
+
+        BlockData 0.6.9 emits ``canonical`` and ``snbt``. Older AntiGrief
+        snapshots also use ``canonical_nbt`` and ``raw_snbt``; keep both readable
+        without changing the original snapshot or its native restore payload.
+        """
         if not isinstance(snapshot, dict):
             return None
         entity = snapshot.get("block_entity")
-        return dict(entity) if isinstance(entity, dict) else None
+        if not isinstance(entity, dict):
+            return None
+        result = dict(entity)
+        if "canonical" in entity:
+            result["canonical_nbt"] = entity["canonical"]
+        if "snbt" in entity:
+            result["raw_snbt"] = entity["snbt"]
+        return result
 
     @classmethod
     def inventory_entries(cls, snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -603,7 +616,8 @@ class BlockDataAdapter:
             return False
 
     @classmethod
-    def inventory_map(cls, snapshot: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    def _inventory_view(cls, snapshot: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+        """Index captured slots for read-only comparisons without copying item NBT."""
         result: dict[int, dict[str, Any]] = {}
         for entry in cls.inventory_entries(snapshot):
             if "slot" not in entry:
@@ -612,10 +626,15 @@ class BlockDataAdapter:
             if cls.is_empty_item(item) or not isinstance(item, dict):
                 continue
             try:
-                result[int(entry["slot"])] = deepcopy(item)
+                result[int(entry["slot"])] = item
             except (TypeError, ValueError):
                 continue
         return result
+
+    @classmethod
+    def inventory_map(cls, snapshot: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+        """Return detached items for callers that build or modify restore payloads."""
+        return deepcopy(cls._inventory_view(snapshot))
 
     @classmethod
     def container_capacity(cls, snapshot: dict[str, Any] | None) -> int:
@@ -665,8 +684,8 @@ class BlockDataAdapter:
         before: dict[str, Any] | None,
         after: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
-        left = cls.inventory_map(before)
-        right = cls.inventory_map(after)
+        left = cls._inventory_view(before)
+        right = cls._inventory_view(after)
         changes: list[dict[str, Any]] = []
         for slot in sorted(set(left) | set(right)):
             old = left.get(slot)
@@ -711,7 +730,7 @@ class BlockDataAdapter:
     @classmethod
     def snapshot_summary(cls, snapshot: dict[str, Any]) -> dict[str, Any]:
         entity = cls.block_entity(snapshot) or {}
-        inventory = cls.inventory_map(snapshot)
+        inventory = cls._inventory_view(snapshot)
         return {
             "type": snapshot.get("type"),
             "revision": snapshot.get("revision"),

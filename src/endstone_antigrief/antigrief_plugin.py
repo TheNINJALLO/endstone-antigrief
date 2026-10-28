@@ -1,5 +1,5 @@
 """
-AntiGrief Plugin v1.5.20 - BlockData Edition
+AntiGrief Plugin v1.5.22 - BlockData Edition
 Player behavior logging, analysis, and WebUI dashboard for Endstone
 """
 
@@ -32,7 +32,7 @@ try:
 except ImportError:
     HAS_PACKET_LIB = False
 from datetime import datetime, timedelta, timezone
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, OrderedDict
 from copy import deepcopy
 import traceback
 from uuid import uuid4
@@ -60,7 +60,7 @@ def now_est():
 # CONFIGURATION
 # ============================================================================
 
-PLUGIN_VERSION = "v1.5.20"
+PLUGIN_VERSION = "v1.5.22"
 DATA_DIR = "plugins/antigrief_data"
 DB_FILE = os.path.join(DATA_DIR, "agdata.db")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -149,6 +149,8 @@ PLAYER_INVENTORY_CAPTURE_BATCH_SIZE = max(1, int(config.get("player_inventory_ca
 PLAYER_INVENTORY_DECODE_WARNING_COOLDOWN = max(10, int(config.get("player_inventory_decode_warning_cooldown_seconds", 300)))
 BLOCKDATA_CONNECT_RETRY_TICKS = max(1, int(config.get("blockdata_connect_retry_ticks", 20)))
 BLOCKDATA_CONNECT_LOG_EVERY = max(1, int(config.get("blockdata_connect_log_every", 10)))
+CONTAINER_ACCESS_CACHE_TTL = 30.0
+CONTAINER_ACCESS_CACHE_SIZE = 2048
 
 
 
@@ -352,6 +354,7 @@ def init_database():
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(time)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_position ON interactions(world, x, y, z)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_coordinates_time ON interactions(x, y, z, time)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_container_snapshots_time ON container_snapshots(captured_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_container_snapshots_position ON container_snapshots(world, x, y, z)")
 
@@ -698,7 +701,7 @@ writer_thread.start()
 
 class AntiGriefPlugin(Plugin):
     api_version = "0.11"
-    version = "1.5.20"
+    version = "1.5.22"
     depend = ["blockdata_api"]
 
     # Command definitions with English descriptions
@@ -806,6 +809,7 @@ class AntiGriefPlugin(Plugin):
         # __init__ can dereference an uninitialised native logger and crash BDS.
         # Initialise runtime state here, after the plugin has been loaded.
         self._container_backups = {}  # Legacy behavior-pack fallback only.
+        self._container_access_cache = OrderedDict()
         self.blockdata = BlockDataAdapter()
         self._blockdata_ready = False
         self._last_player_inventory_revisions = {}
@@ -859,12 +863,12 @@ class AntiGriefPlugin(Plugin):
                 f'{self.blockdata.player_inventory_capabilities}'
             )
             self._start_player_inventory_snapshot_sweeper()
-            for player in list(self.server.online_players):
+            for offset, player in enumerate(self.server.online_players):
                 try:
                     self.server.scheduler.run_task(
                         self,
                         lambda current=player: self._capture_player_inventory(current, force=True),
-                        delay=20,
+                        delay=20 + offset,
                     )
                 except Exception:
                     pass
@@ -986,11 +990,11 @@ class AntiGriefPlugin(Plugin):
     def _queue_player_inventory_snapshot(self, snapshot, *, force=False):
         if not isinstance(snapshot, dict):
             return None
-        summary = self.blockdata.player_inventory_summary(snapshot)
         player_key = self._player_inventory_key(snapshot)
         revision_text = str(snapshot.get('revision'))
         if not force and self._last_player_inventory_revisions.get(player_key) == revision_text:
             return None
+        summary = self.blockdata.player_inventory_summary(snapshot)
         self._last_player_inventory_revisions[player_key] = revision_text
         self._player_inventory_keys_by_name[summary['player_name'].casefold()] = player_key
         sections = summary['sections']
@@ -1015,8 +1019,7 @@ class AntiGriefPlugin(Plugin):
             'item_count': summary['total_item_count'],
             'storage_item_count': summary['storage_item_count'],
             'snapshot_json': json.dumps(
-                self.blockdata.json_safe(snapshot), ensure_ascii=True,
-                separators=(',', ':'),
+                snapshot, ensure_ascii=True, default=str, separators=(',', ':'),
             ),
         })
         return snapshot_id
@@ -1092,6 +1095,8 @@ class AntiGriefPlugin(Plugin):
         self._player_inventory_sweeper_started = True
 
         def sweep():
+            if self._shutting_down:
+                return
             players = list(self.server.online_players)
             if not players:
                 self._player_inventory_cursor = 0
@@ -1099,8 +1104,21 @@ class AntiGriefPlugin(Plugin):
             batch_size = min(PLAYER_INVENTORY_CAPTURE_BATCH_SIZE, len(players))
             start = self._player_inventory_cursor % len(players)
             for offset in range(batch_size):
-                player = players[(start + offset) % len(players)]
-                self._capture_player_inventory(player)
+                name = str(players[(start + offset) % len(players)].name)
+
+                def capture(current_name=name):
+                    if self._shutting_down:
+                        return
+                    player = self.server.get_player(current_name)
+                    if player is not None:
+                        self._capture_player_inventory(player)
+
+                # Keep the configured batch/period while distributing native
+                # captures across server ticks instead of one large tick spike.
+                self.server.scheduler.run_task(
+                    self, capture,
+                    delay=1 + offset * PLAYER_INVENTORY_CAPTURE_TICKS // batch_size,
+                )
             self._player_inventory_cursor = (start + batch_size) % len(players)
 
         try:
@@ -1167,6 +1185,7 @@ class AntiGriefPlugin(Plugin):
                 (*key, str(owner_name), str(source), now, now),
             )
             db.commit()
+        self._container_access_cache.pop(key, None)
 
     def _clear_container_owner(self, world, x, y, z):
         key = self._container_position_key(world, x, y, z)
@@ -1174,6 +1193,7 @@ class AntiGriefPlugin(Plugin):
             db.execute("DELETE FROM container_trusted WHERE world=? AND x=? AND y=? AND z=?", key)
             db.execute("DELETE FROM container_owners WHERE world=? AND x=? AND y=? AND z=?", key)
             db.commit()
+        self._container_access_cache.pop(key, None)
 
     def _set_container_trust(self, world, x, y, z, player_name, trusted=True):
         key = self._container_position_key(world, x, y, z)
@@ -1191,6 +1211,7 @@ class AntiGriefPlugin(Plugin):
                     (*key, str(player_name)),
                 )
             db.commit()
+        self._container_access_cache.pop(key, None)
 
     def _infer_container_owner_from_logs(self, world, x, y, z):
         normal_world = self._normalise_world_key(world)
@@ -1209,21 +1230,39 @@ class AntiGriefPlugin(Plugin):
                 return str(name)
         return None
 
-    def _get_container_owner(self, world, x, y, z):
+    def _container_access_info(self, world, x, y, z):
+        """Cache ownership and trust, including unowned legacy containers."""
         if not CONTAINER_OWNERSHIP_ENABLED:
-            return None
+            return None, frozenset()
         key = self._container_position_key(world, x, y, z)
+        now = tm.monotonic()
+        cached = self._container_access_cache.get(key)
+        if cached is not None and cached[0] > now:
+            self._container_access_cache.move_to_end(key)
+            return cached[1], cached[2]
         with sqlite3.connect(DB_FILE) as db:
             row = db.execute(
                 "SELECT owner_name FROM container_owners WHERE world=? AND x=? AND y=? AND z=?",
                 key,
             ).fetchone()
-        if row and row[0]:
-            return str(row[0])
-        return self._infer_container_owner_from_logs(world, x, y, z)
+            trusted = frozenset(
+                str(record[0]).casefold() for record in db.execute(
+                    "SELECT player_name FROM container_trusted WHERE world=? AND x=? AND y=? AND z=?",
+                    key,
+                )
+            )
+        owner = str(row[0]) if row and row[0] else self._infer_container_owner_from_logs(world, x, y, z)
+        self._container_access_cache[key] = (now + CONTAINER_ACCESS_CACHE_TTL, owner, trusted)
+        self._container_access_cache.move_to_end(key)
+        if len(self._container_access_cache) > CONTAINER_ACCESS_CACHE_SIZE:
+            self._container_access_cache.popitem(last=False)
+        return owner, trusted
+
+    def _get_container_owner(self, world, x, y, z):
+        return self._container_access_info(world, x, y, z)[0]
 
     def _is_container_authorized(self, player, world, x, y, z):
-        owner = self._get_container_owner(world, x, y, z)
+        owner, trusted = self._container_access_info(world, x, y, z)
         if not owner:
             # Unknown legacy ownership is never treated as theft automatically.
             return None, True
@@ -1235,14 +1274,7 @@ class AntiGriefPlugin(Plugin):
             is_operator = False
         if player_name.casefold() == owner.casefold() or is_operator:
             return owner, True
-        key = self._container_position_key(world, x, y, z)
-        with sqlite3.connect(DB_FILE) as db:
-            trusted = db.execute(
-                """SELECT 1 FROM container_trusted
-                   WHERE world=? AND x=? AND y=? AND z=? AND lower(player_name)=lower(?)""",
-                (*key, player_name),
-            ).fetchone()
-        return owner, bool(trusted)
+        return owner, player_name.casefold() in trusted
 
     @staticmethod
     def _unwrap_nbt_json(value):
@@ -1728,10 +1760,13 @@ class AntiGriefPlugin(Plugin):
         location = dict(snapshot.get("location") or {})
         entity = self.blockdata.block_entity(snapshot) or {}
         summary = self.blockdata.snapshot_summary(snapshot)
-        snapshot_for_storage = self.blockdata.json_safe(snapshot)
+        snapshot_for_storage = snapshot
         raw_snbt = str(entity.get("raw_snbt") or "") if STORE_RAW_SNBT else ""
         if not STORE_RAW_SNBT and isinstance(snapshot_for_storage.get("block_entity"), dict):
+            snapshot_for_storage = dict(snapshot)
+            snapshot_for_storage["block_entity"] = dict(snapshot["block_entity"])
             snapshot_for_storage["block_entity"].pop("raw_snbt", None)
+            snapshot_for_storage["block_entity"].pop("snbt", None)
 
         data_buffers['container_snapshot'].append({
             'snapshot_id': snapshot_id,
@@ -1747,7 +1782,7 @@ class AntiGriefPlugin(Plugin):
             'occupied_slots': summary['occupied_slots'],
             'item_count': summary['item_count'],
             'canonical_nbt': summary['canonical_nbt'],
-            'snapshot_json': json.dumps(snapshot_for_storage, ensure_ascii=True, separators=(',', ':')),
+            'snapshot_json': json.dumps(snapshot_for_storage, ensure_ascii=True, default=str, separators=(',', ':')),
             'raw_snbt': raw_snbt,
         })
         return snapshot_id
@@ -3910,11 +3945,6 @@ class AntiGriefPlugin(Plugin):
             container_owner, container_authorized = self._is_container_authorized(
                 player, dimension, bx, by, bz
             )
-            if container_owner and not container_authorized:
-                self.logger.warning(
-                    f"[Container] Unauthorized break: {player_name} broke {container_owner}'s "
-                    f"{block_type_str} at {bx},{by},{bz} in {dimension}"
-                )
 
         saved_data = {}
         try:
@@ -3980,8 +4010,7 @@ class AntiGriefPlugin(Plugin):
         # Track recent placements so interact handler can suppress duplicates
         if not hasattr(self, '_recent_placements'):
             self._recent_placements = {}
-        placement_key = f"{player_name}:{bx},{by},{bz}"
-        self._recent_placements[placement_key] = tm.time()
+        self._recent_placements[player_name] = tm.monotonic()
 
         data_buffers['place'].append({
             'name': player_name,
@@ -3992,7 +4021,10 @@ class AntiGriefPlugin(Plugin):
             'time': now_est().isoformat()
         })
 
-        if CONTAINER_OWNERSHIP_ENABLED:
+        if CONTAINER_OWNERSHIP_ENABLED and (
+            self._is_container_block_type(block_type_str)
+            or block_type_str in {'', 'air', 'minecraft:air'}
+        ):
             def register_owner():
                 actual_type = block_type_str
                 if not self._is_container_block_type(actual_type) and self._blockdata_ready:
@@ -4004,9 +4036,6 @@ class AntiGriefPlugin(Plugin):
                 if self._is_container_block_type(actual_type):
                     self._set_container_owner(
                         dimension, bx, by, bz, player_name, 'container_placement'
-                    )
-                    self.logger.info(
-                        f"[Container] Owner registered: {player_name} @ {bx},{by},{bz} ({actual_type})"
                     )
             try:
                 self.server.scheduler.run_task(self, register_owner, delay=1)
@@ -4055,6 +4084,12 @@ class AntiGriefPlugin(Plugin):
             if after_native is None:
                 return
 
+            # Native revisions cover the captured block, actor NBT, and slots.
+            # Rejected requests and no-op closes need no item copies or JSON rows.
+            revision = before_native.get('revision')
+            if revision is not None and revision == after_native.get('revision'):
+                return
+
             changes = self.blockdata.diff_inventory(before_native, after_native)
             owner_name = tracked.get('owner_name')
             authorized = bool(tracked.get('authorized', True))
@@ -4074,7 +4109,7 @@ class AntiGriefPlugin(Plugin):
             metadata_changed = before_metadata != after_metadata
             # Rejected requests and duplicate packet notifications must not fill
             # SQLite with identical snapshots while a container is open.
-            if changes or metadata_changed or close:
+            if changes or metadata_changed:
                 after_snapshot_id = self._queue_container_snapshot(
                     after_native, player_name,
                     'container_close' if close else 'container_transaction', event_time
@@ -4142,11 +4177,6 @@ class AntiGriefPlugin(Plugin):
                     }, ensure_ascii=True, separators=(',', ':')),
                 })
 
-            if changes or metadata_changed:
-                self.logger.info(
-                    f"[Container] {player_name}: {len(changes)} exact slot changes, "
-                    f"metadata_changed={metadata_changed} at {sx},{sy},{sz} ({stype})"
-                )
             if not close:
                 tracked['blockdata_snapshot'] = after_native
                 tracked['snapshot_id'] = after_snapshot_id
@@ -4162,7 +4192,6 @@ class AntiGriefPlugin(Plugin):
         if not close:
             tracked['snapshot'] = new_snapshot
         all_items = set(old_snapshot) | set(new_snapshot)
-        changes = 0
         for item_type in all_items:
             diff = new_snapshot.get(item_type, 0) - old_snapshot.get(item_type, 0)
             if diff == 0:
@@ -4184,12 +4213,6 @@ class AntiGriefPlugin(Plugin):
                     'amount': amount,
                 }, separators=(',', ':')),
             })
-            changes += 1
-        if changes:
-            self.logger.info(
-                f"[Container] {player_name}: {changes} legacy item changes "
-                f"at {sx},{sy},{sz} ({stype})"
-            )
 
     def _queue_container_capture(self, player_name, *, close=False):
         """Coalesce packet notifications and capture BDS state on the next server tick."""
@@ -4277,15 +4300,9 @@ class AntiGriefPlugin(Plugin):
         # When a player places a block, both InteractEvent and PlaceEvent fire.
         # We suppress the interact if this block+player was just logged as a placement.
         if hasattr(self, '_recent_placements'):
-            now = tm.time()
-            # Clean old entries (> 2 seconds)
-            expired = [k for k, v in self._recent_placements.items() if now - v > 2]
-            for k in expired:
-                del self._recent_placements[k]
-            # Check if this player just placed a block within 0.5 seconds
-            for key, place_time in self._recent_placements.items():
-                if key.startswith(f"{player_name}:") and now - place_time < 0.5:
-                    return  # Suppress this interact — it's from a block placement
+            placed_at = self._recent_placements.get(player_name)
+            if placed_at is not None and tm.monotonic() - placed_at < 0.5:
+                return
 
         # Resolve ownership before opening the native tracking session.
         container_owner = None
@@ -4294,11 +4311,6 @@ class AntiGriefPlugin(Plugin):
             container_owner, container_authorized = self._is_container_authorized(
                 player, dim_name, bx, by, bz
             )
-            if container_owner and not container_authorized:
-                self.logger.warning(
-                    f"[Container] Unauthorized access: {player_name} opened {container_owner}'s "
-                    f"{block_type_str} at {bx},{by},{bz} in {dim_name}"
-                )
 
         # Capture the actual container actor, every occupied slot, and canonical NBT.
         if (self._is_container_block_type(block_type_str) and CAPTURE_CONTAINER_OPEN_CLOSE
@@ -4366,10 +4378,6 @@ class AntiGriefPlugin(Plugin):
                     'authorized': container_authorized,
                     'time': tm.time(),
                 }
-                self.logger.info(
-                    f"[Container] Native tracking open: {player_name} @ "
-                    f"{bx},{by},{bz} ({block_type_str})"
-                )
             else:
                 legacy_snapshot = self._snapshot_player_inventory(player_name)
                 if legacy_snapshot is not None:
@@ -4493,7 +4501,6 @@ class AntiGriefPlugin(Plugin):
 
                 # Cache the backup
                 self._container_backups[(x, y, z, dim)] = items
-                self.logger.info(f"[AntiGrief] Cached {len(items)} items for container at {x},{y},{z} in {dim}")
             except Exception as e:
                 self.logger.warning(f"[AntiGrief] Failed to parse container backup payload: {e}")
 
@@ -4547,6 +4554,8 @@ class AntiGriefPlugin(Plugin):
     def on_player_quit(self, event: PlayerQuitEvent):
         """Keep the last exact snapshot but mark it as offline in the WebUI."""
         player_name = str(event.player.name)
+        if hasattr(self, '_recent_placements'):
+            self._recent_placements.pop(player_name, None)
         try:
             self._diff_player_inventory(player_name)
         except Exception as error:

@@ -1,6 +1,8 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
+import pytest
+
 
 def load_adapter():
     path = Path(__file__).parents[1] / "src/endstone_antigrief/blockdata_adapter.py"
@@ -113,6 +115,25 @@ def test_patch_has_changes_ignores_envelope_only():
     assert adapter.patch_has_changes(empty) is False
     empty["inventory_removals"] = [0]
     assert adapter.patch_has_changes(empty) is True
+
+
+@pytest.mark.parametrize("canonical", [True, False])
+def test_native_069_snapshot_fields_are_read_without_mutating_restore_payload(canonical):
+    adapter = load_adapter()
+    current = snapshot((1 << 64) - 1, [])
+    entity = current["block_entity"]
+    del entity["canonical_nbt"]
+    entity["canonical"] = canonical
+    entity["snbt"] = '{CustomName:"Vault"}'
+    # Native fields take precedence over stale aliases in mixed saved records.
+    entity["raw_snbt"] = "old diagnostic text"
+    assert adapter.snapshot_summary(current)["canonical_nbt"] is canonical
+    assert adapter.block_entity(current)["raw_snbt"] == '{CustomName:"Vault"}'
+    assert "canonical_nbt" not in entity
+    assert entity["raw_snbt"] == "old diagnostic text"
+    patch = adapter.build_metadata_restore_patch(current, snapshot(1, [], custom_name="Restored"))
+    assert patch["expected_revision"] == (1 << 64) - 1
+    assert patch["nbt_updates"] == {"CustomName": "Restored"}
 
 
 def test_bridge_loader_continues_when_top_level_candidate_package_is_missing(monkeypatch):

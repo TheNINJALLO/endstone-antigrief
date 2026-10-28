@@ -1,6 +1,6 @@
 # 🦖 Pterodactyl Panel Deployment Guide
 
-This document explains how to deploy and run **AntiGrief v1.5.18** on servers managed by Pterodactyl Panel.
+This document explains how to deploy and run **AntiGrief v1.5.22** with **BlockData 0.6.9** on servers managed by Pterodactyl Panel. Use Endstone 0.11.15, BDS 1.26.60.6, and CPython 3.14 on Linux x86-64.
 
 ---
 
@@ -24,7 +24,8 @@ Ensure your Pterodactyl server file manager reflects the following structure ins
 
 ```text
 plugins/
-├── blockdata_api.so                          (Linux C++ native extension)
-├── endstone_blockdata_api-0.6.6-py3-none-any.whl (BlockData inspector wheel)
-└── endstone_antigrief-1.5.18-py3-none-any.whl    (AntiGrief plugin wheel)
+├── endstone_blockdata_inspector-0.6.9-cp314-cp314-linux_x86_64.whl
+└── endstone_antigrief-1.5.22-py3-none-any.whl
 ```
+
+The complete inspector wheel bundles and loads its matching native provider. Remove older inspector wheels and standalone BlockData libraries while the server is stopped; preserve plugin data folders. See [installation](Installation.md).

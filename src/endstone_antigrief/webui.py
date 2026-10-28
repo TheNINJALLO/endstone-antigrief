@@ -325,7 +325,7 @@ def create_app():
     app = FastAPI(
         title="AntiGrief WebUI",
         description="Player Behavior Logging Dashboard",
-        version="1.5.20"
+        version="1.5.22"
     )
 
     app.add_middleware(
@@ -768,7 +768,8 @@ def create_app():
             response.update(snapshot_record)
         elif isinstance(inline_snapshot, dict):
             response["snapshot"] = inline_snapshot
-            response["raw_snbt"] = (inline_snapshot.get("block_entity") or {}).get("raw_snbt", "")
+            entity = inline_snapshot.get("block_entity") or {}
+            response["raw_snbt"] = entity.get("snbt", entity.get("raw_snbt", ""))
         return response
 
     @app.get("/api/container-snapshots")
@@ -2594,7 +2595,8 @@ def get_dashboard_html():
                 return;
             }
             if (tab === 'snbt') {
-                const raw = payload?.raw_snbt || entity?.raw_snbt
+                const raw = payload?.raw_snbt || entity?.snbt || entity?.raw_snbt
+                    || payload?.blockdata?.block_snapshot?.block_entity?.snbt
                     || payload?.blockdata?.block_snapshot?.block_entity?.raw_snbt
                     || 'No raw SNBT stored for this record.';
                 content.innerHTML = renderJson(raw);

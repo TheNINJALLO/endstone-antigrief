@@ -2,6 +2,20 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## [1.5.22] - 2026-10-28
+
+- Remove routine container open, access, ownership, slot-change, legacy-diff, and backup-cache console messages. Unauthorized activity remains in the database and WebUI; native failures and rollback status remain visible.
+- Cache container ownership and trust for 30 seconds in a bounded 2,048-container LRU cache, including unowned legacy containers. Ownership/trust commands and placement invalidate the affected entry immediately. Index historical placement lookups by coordinates and time.
+- Skip item diffing and redundant close snapshots when native revisions are unchanged. Compare occupied slots without copying unchanged item NBT; retain detached payloads for changed items and recovery callers. Remove duplicate JSON conversions before snapshot storage and skip player inventory summaries for unchanged revisions.
+- Distribute periodic player inventory captures across the configured scan period, resolve players again when tasks run, and stop pending scan work during shutdown. Stagger reconnect captures as well.
+- Avoid scheduling native container checks for known ordinary placed blocks, and replace repeated scans of recent placements with a per-player timestamp lookup.
+- Target BlockData API 0.6.9 on Endstone 0.11.15, BDS 1.26.60.6, and CPython 3.14 on Linux x86-64. Raise the Endstone package minimum to 0.11.15 and update current installation, dashboard, package, and plugin version metadata.
+- Recognize the bridge's `canonical` and `snbt` block-entity fields in snapshot summaries, container audit records, and WebUI SNBT views. Preserve support for older saved `canonical_nbt` and `raw_snbt` fields without modifying canonical restore payloads.
+- Exclude both SNBT aliases from queued container snapshots when `store_raw_snbt` is disabled.
+- Correct bundle installation instructions: install the complete 0.6.9 inspector wheel, which registers its matching native provider, and remove older standalone BlockData libraries while stopped.
+- Add regressions for the matching 0.6.9 bridge/provider handshake, mixed-version rejection, service disconnection, native snapshot metadata, SNBT storage settings, and SQLite-to-WebUI inspection with current and legacy field names.
+- Validation: 131 tests and CI Ruff checks pass locally on Python 3.11. A 54-slot nested-bundle benchmark reduces Python inventory diff work from about 16 ms to 0.2–0.5 ms per call; this excludes native capture and is not a live server tick measurement. Native BDS 1.26.60.6 and live player validation remain pending.
+
 ## [1.5.20] - 2026-10-15
 
 - Fix dashboard search submission and display: Enter applies filters, player names are trimmed, areas accept spaces or commas, and radius zero searches the exact position. Invalid filters and failed requests show a visible error instead of leaving a blank or stale table. Older responses cannot replace a newer search.
@@ -56,6 +70,7 @@ All notable changes are documented here. This project follows semantic versionin
 - Recursive bundle and custom storage-item rendering.
 - Coordinated rollback, confirmed item recovery, and printable grief reports.
 
-[Unreleased]: https://github.com/TheNINJALLO/endstone-antigrief/compare/v1.5.16...HEAD
+[Unreleased]: https://github.com/TheNINJALLO/endstone-antigrief/compare/v1.5.22...HEAD
+[1.5.22]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.22
 [1.5.16]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.16
 [1.5.13]: https://github.com/TheNINJALLO/endstone-antigrief/releases/tag/v1.5.13
