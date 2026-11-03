@@ -2,6 +2,10 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## [1.5.24] - 2026-11-02
+
+- Declare the Windows `tzdata` dependency required by the dashboard's `America/New_York` timezone. The 137-test suite passes in a fresh Windows Python 3.11 / Endstone 0.11.15 environment after installing that dependency. This does not qualify a Windows BlockData provider.
+
 ## [1.5.23] - 2026-10-28
 
 - Fix startup failure while creating `idx_interactions_coordinates_time` on a large history database with insufficient database, quota, or temporary-disk space. Disable this additional index build by default; retain existing indexes and all audit data.

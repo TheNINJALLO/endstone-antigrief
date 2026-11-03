@@ -75,7 +75,7 @@ BlockData-powered anti-grief logging, exact container NBT snapshots, rollback, a
 | Bedrock Dedicated Server | `1.26.60.6` (Minecraft `1.26.60`) |
 | BlockData API | `0.6.9` complete inspector bundle wheel |
 | Native runtime | Linux x86-64, CPython `3.14` |
-| Plugin release | `v1.5.23` |
+| Plugin release | `v1.5.24` (local candidate) |
 
 ## Install
 
@@ -137,7 +137,7 @@ AntiGrief v1.5.18 fixes repeated SQLite flush failures caused by non-UTF-8 item 
 1. Stop the server.
 2. Remove older duplicate BlockData native plugins, inspector wheels, and AntiGrief wheels from `plugins/`.
 3. Copy the complete BlockData 0.6.9 inspector bundle wheel into `plugins/`.
-4. Copy `endstone_antigrief-1.5.23-py3-none-any.whl` into `plugins/`.
+4. Copy `endstone_antigrief-1.5.24-py3-none-any.whl` for the local candidate (or `1.5.23` from the published release) into `plugins/`.
 5. Start the server and verify the console reports `BlockData API connected`.
 6. Change the WebUI secret in `plugins/antigrief_data/config.json` before exposing the dashboard.
 
