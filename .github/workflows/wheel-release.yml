@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
       - name: Install the supported SDK and test dependencies
         run: |
-          python -m pip install endstone==0.11.16 build pytest httpx httpx2
+          python -m pip install endstone==0.11.16 build pytest httpx httpx2 'websockets>=15'
           python -m pip install .
       - name: Run existing regression tests
         run: |
